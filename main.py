@@ -107,10 +107,10 @@ if __name__ == '__main__':
         for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
             pages.append((pdf_path, page_num, image_bytes))
 
-    results = {}
+    results = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         for key, result in executor.map(lambda args: process_page(*args), pages):
-            results[key] = result
+            results.append(result)
             logger.info(f"done: {key}")
 
     with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:

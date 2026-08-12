@@ -44,14 +44,13 @@ async def extract(file: UploadFile = File(...)):
 
     try:
         pages = list(enumerate(pdf_to_images(tmp_path), start=1))
-        results = {}
+        results = []
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = executor.map(
                 lambda p: process_page(tmp_path, p[0], p[1]), pages
             )
             for key, result in futures:
-                key = key.replace(os.path.basename(tmp_path), file.filename)
-                results[key] = result
+                results.append(result)
                 logger.info(f"done: {key}")
     finally:
         os.remove(tmp_path)
@@ -59,24 +58,24 @@ async def extract(file: UploadFile = File(...)):
     return results
 
 
-@app.get("/extract-all")
-def extract_all():
-    """Process every PDF in the invoice/ folder (same as running main.py) and return the combined JSON."""
-    pages = []
-    for pdf_path in glob.glob(os.path.join(INVOICE_DIR, "*.pdf")):
-        for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
-            pages.append((pdf_path, page_num, image_bytes))
+# @app.get("/extract-all")
+# def extract_all():
+#     """Process every PDF in the invoice/ folder (same as running main.py) and return the combined JSON."""
+#     pages = []
+#     for pdf_path in glob.glob(os.path.join(INVOICE_DIR, "*.pdf")):
+#         for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
+#             pages.append((pdf_path, page_num, image_bytes))
 
-    results = {}
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        for key, result in executor.map(lambda args: process_page(*args), pages):
-            results[key] = result
-            logger.info(f"done: {key}")
+#     results = []
+#     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+#         for key, result in executor.map(lambda args: process_page(*args), pages):
+#             results.append(result)
+#             logger.info(f"done: {key}")
 
-    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+#     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+#         json.dump(results, f, indent=2, ensure_ascii=False)
 
-    return results
+#     return results
 
 
 @app.get("/results")
