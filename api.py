@@ -56,39 +56,3 @@ async def extract(file: UploadFile = File(...)):
         os.remove(tmp_path)
 
     return results
-
-
-# @app.get("/extract-all")
-# def extract_all():
-#     """Process every PDF in the invoice/ folder (same as running main.py) and return the combined JSON."""
-#     pages = []
-#     for pdf_path in glob.glob(os.path.join(INVOICE_DIR, "*.pdf")):
-#         for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
-#             pages.append((pdf_path, page_num, image_bytes))
-
-#     results = []
-#     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-#         for key, result in executor.map(lambda args: process_page(*args), pages):
-#             results.append(result)
-#             logger.info(f"done: {key}")
-
-#     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-#         json.dump(results, f, indent=2, ensure_ascii=False)
-
-#     return results
-
-
-# @app.get("/results")
-# def get_results():
-#     """Fetch the results file written by main.py / the last /extract-all run."""
-#     if not os.path.exists(OUTPUT_PATH):
-#         raise HTTPException(status_code=404, detail=f"{OUTPUT_PATH} not found yet")
-#     with open(OUTPUT_PATH, "r", encoding="utf-8") as f:
-#         return json.load(f)
-
-
-
-
-# "Extract the data from this receipt and return ONLY a single JSON object "
-#     "with fields: merchant_name, date, items (list of {name, quantity, price}), "
-#     "subtotal, tax, total. Use null for anything unreadable. No prose, no markdown."
