@@ -48,3 +48,11 @@
 2026-08-12 15:41:43,035 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
 2026-08-12 15:41:43,036 INFO done: tmp10snsw0k.pdf#page1
 2026-08-12 15:41:43,036 INFO done: tmp10snsw0k.pdf#page2
+2026-08-12 16:16:18,829 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 16:16:18,832 INFO done: tmppo05m419.pdf#page1
+2026-08-12 16:16:19,416 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 16:16:19,419 INFO done: tmppo05m419.pdf#page2
+2026-08-12 16:53:20,678 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 16:53:23,578 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 16:53:24,230 INFO done: tmp12p4yee0.pdf#page1
+2026-08-12 16:53:24,230 INFO done: tmp12p4yee0.pdf#page2
