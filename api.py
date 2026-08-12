@@ -22,7 +22,7 @@ app = FastAPI(title="Receipt OCR API")
 def root():
     return {
         "message": "Receipt OCR API is running. See /docs for interactive testing.",
-        "endpoints": ["/health", "POST /extract", "GET /extract-all", "GET /results"],
+        "endpoints": ["/health", "POST /extract"],
     }
 
 
@@ -78,13 +78,13 @@ async def extract(file: UploadFile = File(...)):
 #     return results
 
 
-@app.get("/results")
-def get_results():
-    """Fetch the results file written by main.py / the last /extract-all run."""
-    if not os.path.exists(OUTPUT_PATH):
-        raise HTTPException(status_code=404, detail=f"{OUTPUT_PATH} not found yet")
-    with open(OUTPUT_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+# @app.get("/results")
+# def get_results():
+#     """Fetch the results file written by main.py / the last /extract-all run."""
+#     if not os.path.exists(OUTPUT_PATH):
+#         raise HTTPException(status_code=404, detail=f"{OUTPUT_PATH} not found yet")
+#     with open(OUTPUT_PATH, "r", encoding="utf-8") as f:
+#         return json.load(f)
 
 
 
