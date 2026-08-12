@@ -1,0 +1,48 @@
+2026-08-12 14:14:06,331 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:14:08,993 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:14:20,355 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:14:20,357 INFO done: HALDIA.pdf#page1
+2026-08-12 14:14:20,357 INFO done: HALDIA.pdf#page2
+2026-08-12 14:14:20,358 INFO done: HALDIA.pdf#page3
+2026-08-12 14:14:50,768 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:14:54,047 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:15:04,769 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:15:04,770 INFO done: India_Transport_FB60.pdf#page1
+2026-08-12 14:15:04,770 INFO done: India_Transport_FB60.pdf#page2
+2026-08-12 14:21:09,379 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:21:12,516 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:21:23,785 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:21:37,096 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:21:37,097 INFO done: India_Transport_FB60.pdf#page1
+2026-08-12 14:21:37,097 INFO done: India_Transport_FB60.pdf#page2
+2026-08-12 14:28:29,267 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:28:32,435 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:28:42,778 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:28:51,790 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:28:51,791 ERROR failed: tmpq5gbjjrt.pdf#page1: JSONDecodeError: Expecting value: line 24 column 5 (char 451)
+2026-08-12 14:28:51,791 INFO done: India_Transport_FB60.pdf#page1
+2026-08-12 14:28:51,791 INFO done: India_Transport_FB60.pdf#page2
+2026-08-12 14:31:06,755 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:31:10,034 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:31:10,038 INFO done: India_Transport_FB60.pdf#page1
+2026-08-12 14:31:10,038 INFO done: India_Transport_FB60.pdf#page2
+2026-08-12 14:33:11,274 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:33:16,972 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:33:16,996 INFO done: Kunal_Logistics_FB60.pdf#page1
+2026-08-12 14:33:31,037 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:33:40,360 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:33:40,373 INFO done: Kunal_Logistics_FB60.pdf#page2
+2026-08-12 14:33:40,374 INFO done: Kunal_Logistics_FB60.pdf#page3
+2026-08-12 14:33:40,374 INFO done: Kunal_Logistics_FB60.pdf#page4
+2026-08-12 14:33:47,936 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:33:47,945 INFO done: Kunal_Logistics_FB60.pdf#page5
+2026-08-12 14:33:52,955 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:33:52,989 INFO done: Kunal_Logistics_FB60.pdf#page6
+2026-08-12 14:33:55,556 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:33:55,565 INFO done: Kunal_Logistics_FB60.pdf#page7
+2026-08-12 14:34:06,472 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:34:15,691 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:34:15,703 INFO done: Kunal_Logistics_FB60.pdf#page8
+2026-08-12 14:34:15,704 INFO done: Kunal_Logistics_FB60.pdf#page9
+2026-08-12 14:34:17,940 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 14:34:17,943 INFO done: Kunal_Logistics_FB60.pdf#page10

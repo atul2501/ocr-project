@@ -86,3 +86,10 @@ def get_results():
         raise HTTPException(status_code=404, detail=f"{OUTPUT_PATH} not found yet")
     with open(OUTPUT_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+
+
+# "Extract the data from this receipt and return ONLY a single JSON object "
+#     "with fields: merchant_name, date, items (list of {name, quantity, price}), "
+#     "subtotal, tax, total. Use null for anything unreadable. No prose, no markdown."
