@@ -1,0 +1,131 @@
+2026-08-12 12:23:26,244 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:29,059 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:29,969 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:32,065 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:32,463 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:32,481 INFO done: BRADE.pdf#page1
+2026-08-12 12:23:32,489 INFO done: EFFISTACK.pdf#page1
+2026-08-12 12:23:32,489 INFO done: EFFISTACK.pdf#page2
+2026-08-12 12:23:32,489 INFO done: EFFISTACK.pdf#page3
+2026-08-12 12:23:32,489 INFO done: EFFISTACK.pdf#page4
+2026-08-12 12:23:35,038 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:35,193 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:35,206 INFO done: HALDIA.pdf#page1
+2026-08-12 12:23:35,208 INFO done: HALDIA.pdf#page2
+2026-08-12 12:23:37,833 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:37,838 INFO done: HALDIA.pdf#page3
+2026-08-12 12:23:39,456 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:39,683 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:45,262 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:45,685 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:47,742 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:48,829 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:50,590 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:52,072 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:53,407 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:54,868 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:54,895 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:57,844 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:57,846 ERROR failed: India_Transport_FB60.pdf#page1: JSONDecodeError: Expecting value: line 24 column 5 (char 451)
+2026-08-12 12:23:57,851 INFO done: India_Transport_FB60.pdf#page1
+2026-08-12 12:23:57,852 INFO done: India_Transport_FB60.pdf#page2
+2026-08-12 12:23:57,852 INFO done: KABRA.pdf#page1
+2026-08-12 12:23:57,852 INFO done: KABRA.pdf#page2
+2026-08-12 12:23:57,852 INFO done: KABRA.pdf#page3
+2026-08-12 12:23:57,852 INFO done: Kunal_Logistics_FB60.pdf#page1
+2026-08-12 12:23:57,852 INFO done: Kunal_Logistics_FB60.pdf#page2
+2026-08-12 12:23:57,853 INFO done: Kunal_Logistics_FB60.pdf#page3
+2026-08-12 12:23:57,853 INFO done: Kunal_Logistics_FB60.pdf#page4
+2026-08-12 12:23:57,853 INFO done: Kunal_Logistics_FB60.pdf#page5
+2026-08-12 12:23:59,751 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:59,885 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:23:59,898 INFO done: Kunal_Logistics_FB60.pdf#page6
+2026-08-12 12:23:59,899 INFO done: Kunal_Logistics_FB60.pdf#page7
+2026-08-12 12:24:04,199 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:04,521 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:04,529 INFO done: Kunal_Logistics_FB60.pdf#page8
+2026-08-12 12:24:04,540 INFO done: Kunal_Logistics_FB60.pdf#page9
+2026-08-12 12:24:05,913 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:05,932 INFO done: Kunal_Logistics_FB60.pdf#page10
+2026-08-12 12:24:08,146 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:08,159 INFO done: Mahalaxmi_Transport_FB60.pdf#page1
+2026-08-12 12:24:12,380 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:12,394 INFO done: NEW_ACHARYA.pdf#page1
+2026-08-12 12:24:12,684 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:12,697 INFO done: RELIANCE.pdf#page1
+2026-08-12 12:24:14,553 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:14,717 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:14,734 INFO done: RELIANCE.pdf#page2
+2026-08-12 12:24:14,735 INFO done: RELIANCE.pdf#page3
+2026-08-12 12:24:16,667 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:16,681 INFO done: RELIANCE.pdf#page4
+2026-08-12 12:24:18,889 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:18,916 INFO done: RELIANCE2.pdf#page1
+2026-08-12 12:24:18,995 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:19,012 INFO done: RELIANCE2.pdf#page2
+2026-08-12 12:24:20,784 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:20,799 INFO done: RELIANCE2.pdf#page3
+2026-08-12 12:24:26,510 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:26,924 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:26,939 INFO done: SHREE_GANESH.pdf#page1
+2026-08-12 12:24:26,939 INFO done: SHREE_GANESH.pdf#page2
+2026-08-12 12:24:30,492 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:30,518 INFO done: SHREE_GANESH.pdf#page3
+2026-08-12 12:24:31,669 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:31,674 INFO done: SHREE_GANESH.pdf#page4
+2026-08-12 12:24:34,886 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:34,910 INFO done: SHREE_GANESH.pdf#page5
+2026-08-12 12:24:37,256 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:37,265 INFO done: SILVER_PLACE.pdf#page1
+2026-08-12 12:24:38,358 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:38,378 INFO done: SILVER_PLACE.pdf#page2
+2026-08-12 12:24:40,791 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:40,814 INFO done: SILVER_PLACE.pdf#page3
+2026-08-12 12:24:41,746 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:41,757 INFO done: SMT.pdf#page1
+2026-08-12 12:24:43,006 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:43,026 INFO done: SMT.pdf#page2
+2026-08-12 12:24:44,812 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:44,837 INFO done: SMT.pdf#page3
+2026-08-12 12:24:46,982 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:46,998 INFO done: SUPREME_PET.pdf#page1
+2026-08-12 12:24:48,712 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:48,727 INFO done: SUPREME_PET.pdf#page2
+2026-08-12 12:24:49,817 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:49,827 INFO done: SUPREME_PET.pdf#page3
+2026-08-12 12:24:52,823 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:52,848 INFO done: SUPREME_PET.pdf#page4
+2026-08-12 12:24:53,558 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:53,571 INFO done: SUPREME_PET.pdf#page5
+2026-08-12 12:24:55,786 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:56,716 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:56,718 INFO done: VAPA.pdf#page1
+2026-08-12 12:24:56,718 INFO done: VAPA.pdf#page2
+2026-08-12 12:24:59,126 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:24:59,128 INFO done: VAPA.pdf#page3
+2026-08-12 12:25:02,590 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:25:02,593 INFO done: VAPA.pdf#page4
+2026-08-12 12:42:02,054 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:42:04,297 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:42:04,298 INFO done: RELIANCE.pdf#page1
+2026-08-12 12:42:05,641 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:42:05,641 INFO done: RELIANCE.pdf#page2
+2026-08-12 12:42:05,641 INFO done: RELIANCE.pdf#page3
+2026-08-12 12:42:09,026 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:42:09,027 INFO done: RELIANCE.pdf#page4
+2026-08-12 12:43:37,364 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:43:41,887 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:43:42,426 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:43:42,427 INFO done: SUPREME_PET.pdf#page1
+2026-08-12 12:43:42,427 INFO done: SUPREME_PET.pdf#page2
+2026-08-12 12:43:44,724 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:43:44,724 INFO done: SUPREME_PET.pdf#page3
+2026-08-12 12:43:44,725 INFO done: SUPREME_PET.pdf#page4
+2026-08-12 12:43:44,934 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:43:44,935 INFO done: SUPREME_PET.pdf#page5
+2026-08-12 12:51:58,986 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:52:00,896 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:52:02,430 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-12 12:52:02,433 INFO done: HALDIA.pdf#page1
+2026-08-12 12:52:02,434 INFO done: HALDIA.pdf#page2
+2026-08-12 12:52:02,434 INFO done: HALDIA.pdf#page3
