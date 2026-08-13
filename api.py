@@ -3,9 +3,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from tempfile import NamedTemporaryFile
-
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-
 from main import (
     INVOICE_DIR,
     MAX_WORKERS,
@@ -16,7 +14,6 @@ from main import (
 )
 
 app = FastAPI(title="Receipt OCR API")
-
 
 @app.get("/")
 def root():
