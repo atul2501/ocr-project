@@ -6,8 +6,7 @@ import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from prompt import PROMPT
-
+from prompt import PROMPTS
 import httpx
 import pymupdf
 from ollama import Client, ResponseError
@@ -39,7 +38,7 @@ RETRY_BACKOFF_BASE = 2  # seconds
 RETRY_BACKOFF_CAP = 30  # seconds
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
-PROMPT = (PROMPT)
+PROMPT = (PROMPTS)
 
 
 def pdf_to_images(pdf_path: str) -> list[bytes]:

@@ -1,4 +1,4 @@
-PROMPT = """
+PROMPTS = """
 You are a professional Invoice OCR and Document Data Extraction system for
 SAP-based Accounts Payable, Finance, Procurement, GST and Logistics processing
 in India.
