@@ -1,4 +1,5 @@
 import glob
+import io
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ from prompt import PROMPTS
 import httpx
 import pymupdf
 from ollama import Client, ResponseError
+from PIL import Image, ImageFilter, ImageOps
 
 client = Client(
     host='https://ollama.com',
@@ -20,9 +22,10 @@ client = Client(
 MODEL = 'gemma4:31b'  # vision-capable, available on this account's free tier
 
 INVOICE_DIR = 'invoice'
-PDF_ZOOM = 2.0  # render scale; higher = sharper but slower/bigger
+PDF_ZOOM = 5  # render scale; higher = sharper but slower/bigger
 OUTPUT_PATH = 'out.json'
 LOG_PATH = 'process.log'
+SHARPENED_DIR = 'output'
 
 logging.basicConfig(
     filename=LOG_PATH,
@@ -32,19 +35,57 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-MAX_WORKERS = 4  # concurrent Ollama requests; no documented rate limit to tune against
+MAX_WORKERS = 10  # concurrent Ollama requests, shared by every caller in this process (CLI batch run + all API requests) so load never exceeds this regardless of how many PDFs come in at once; extra pages simply wait in the executor's internal queue
 MAX_RETRIES = 2  # retries after the first attempt (3 attempts total per page)
 RETRY_BACKOFF_BASE = 2  # seconds
 RETRY_BACKOFF_CAP = 30  # seconds
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
+SHARPEN_RADIUS = 2  # UnsharpMask: pixel radius of the blur used to detect edges #2
+SHARPEN_PERCENT = 200  # UnsharpMask: strength of the sharpening effect #150
+SHARPEN_THRESHOLD = 1  # UnsharpMask: minimum brightness change to be sharpened (avoids amplifying noise) #3
+CONTRAST_CUTOFF = 1  # autocontrast: percent of darkest/lightest pixels clipped before stretching the range
+
 PROMPT = (PROMPTS)
+
+# Single process-wide executor. Reused across the CLI batch run (main()) and
+# every API request (api.py) so concurrent OCR calls are always capped at
+# MAX_WORKERS instead of each caller spinning up its own pool.
+executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
+
+def sharpen_image(png_bytes: bytes) -> bytes:
+    with Image.open(io.BytesIO(png_bytes)) as img:
+        gray = ImageOps.autocontrast(img.convert('L'), cutoff=CONTRAST_CUTOFF)
+        sharpened = gray.filter(
+            ImageFilter.UnsharpMask(
+                radius=SHARPEN_RADIUS,
+                percent=SHARPEN_PERCENT,
+                threshold=SHARPEN_THRESHOLD,
+            )
+        )
+        buf = io.BytesIO()
+        sharpened.save(buf, format='PNG')
+        return buf.getvalue()
+
+
+def save_sharpened_page(pdf_path: str, page_num: int, image_bytes: bytes) -> str:
+    os.makedirs(SHARPENED_DIR, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(pdf_path))[0]
+    out_path = os.path.join(SHARPENED_DIR, f"{stem}_page{page_num}.pdf")
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        img.convert('RGB').save(out_path, format='PDF')
+    return out_path
 
 
 def pdf_to_images(pdf_path: str) -> list[bytes]:
     doc = pymupdf.open(pdf_path)
     matrix = pymupdf.Matrix(PDF_ZOOM, PDF_ZOOM)
-    images = [page.get_pixmap(matrix=matrix).tobytes('png') for page in doc]
+    images = []
+    for page_num, page in enumerate(doc, start=1):
+        image_bytes = sharpen_image(page.get_pixmap(matrix=matrix).tobytes('png'))
+        save_sharpened_page(pdf_path, page_num, image_bytes)
+        images.append(image_bytes)
     doc.close()
     return images
 
@@ -81,8 +122,10 @@ def extract_receipt_with_retry(image: bytes) -> dict:
             if e.status_code not in RETRYABLE_STATUS_CODES:
                 raise  # e.g. 404 model-not-found, 403 needs-subscription: never succeeds
             last_exc = e
+            logger.warning(f"attempt {attempt} failed (status {e.status_code}): {e}")
         except (ConnectionError, httpx.RequestError, ValueError) as e:
             last_exc = e
+            logger.warning(f"attempt {attempt} failed: {type(e).__name__}: {e}")
 
         if attempt <= MAX_RETRIES:
             delay = min(RETRY_BACKOFF_BASE * 2 ** (attempt - 1), RETRY_BACKOFF_CAP)
@@ -96,23 +139,45 @@ def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str,
     try:
         return key, extract_receipt_with_retry(image_bytes)
     except Exception as e:
-        logger.error(f"failed: {key}: {type(e).__name__}: {e}")
+        # logger.exception (not .error) so the full traceback lands in
+        # process.log, not just the message - needed to debug anything
+        # unexpected later, not just the known retryable cases above.
+        logger.exception(f"failed: {key}")
         return key, {"error": f"{type(e).__name__}: {e}"}
 
 
 def main():
     pages = []
     for pdf_path in glob.glob(os.path.join(INVOICE_DIR, '*.pdf')):
-        for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
-            pages.append((pdf_path, page_num, image_bytes))
+        try:
+            for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
+                pages.append((pdf_path, page_num, image_bytes))
+        except Exception:
+            # A corrupt/unreadable PDF shouldn't take the whole batch down;
+            # log it and keep going with the rest of the files.
+            logger.exception(f"failed to render {os.path.basename(pdf_path)}")
 
     results = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        for key, result in executor.map(lambda args: process_page(*args), pages):
-            results.append(result)
-            logger.info(f"done: {key}")
+    for key, result in executor.map(lambda args: process_page(*args), pages):
+        results.append(result)
+        logger.info(f"done: {key}")
 
-    with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+    try:
+        with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+    except OSError:
+        logger.exception(f"failed to write {OUTPUT_PATH}")
+        raise
 
     print(json.dumps(results, indent=2, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception:
+        # Catch-all so any crash (bad INVOICE_DIR, disk full, etc.) is
+        # recorded in process.log with a full traceback, not just printed
+        # to the console and lost.
+        logger.exception("main() crashed")
+        raise

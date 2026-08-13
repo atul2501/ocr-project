@@ -27,6 +27,22 @@ IMPORTANT EXTRACTION RULES:
 - Use numeric values for quantities, rates, taxes and amounts when clearly readable.
 - Use null when the document does not contain a particular field.
 
+ALPHANUMERIC ID FIELDS - read each character individually, do not skim:
+- Commonly confused glyphs: 0 vs O, 1 vs I vs l, 5 vs S, 8 vs B, 6 vs G, 2 vs Z, 9 vs g/q.
+  Look at the surrounding characters and the field's expected format below to decide
+  which one is actually printed.
+- GSTIN: exactly 15 characters - 2 digits (state code), 10 characters (PAN: 5 letters,
+  4 digits, 1 letter), 1 digit (entity code), the letter "Z", 1 alphanumeric checksum.
+  If the extracted value does not fit this pattern, re-examine the image before
+  returning it; if still uncertain, return null rather than a guess.
+- PAN: exactly 10 characters - 5 letters, 4 digits, 1 letter (e.g. AAAAA9999A).
+- Phone: digits only (plus an optional leading + and country code); re-check any
+  digit that could be misread as a letter (e.g. B/8, S/5, O/0, G/6).
+- Email: must match name@domain.tld with no spaces; re-check characters that could
+  be letter/digit confusions before returning.
+- If any of these fields fail their expected format after careful re-reading,
+  return null instead of an incorrect value.
+
 Return exactly this JSON structure:
 
 {
@@ -138,6 +154,7 @@ Return exactly this JSON structure:
       "line_number": null,
       "item_code": null,
       "material_code": null,
+      "lr_number": null,
       "product_name": null,
       "description": null,
       "hsn_code": null,
