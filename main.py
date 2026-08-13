@@ -100,7 +100,7 @@ def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str,
         return key, {"error": f"{type(e).__name__}: {e}"}
 
 
-if __name__ == '__main__':
+def main():
     pages = []
     for pdf_path in glob.glob(os.path.join(INVOICE_DIR, '*.pdf')):
         for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
