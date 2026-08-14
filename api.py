@@ -1,11 +1,8 @@
 import itertools
-import logging
 import os
 import threading
 
 from ollama import Client
-
-logger = logging.getLogger(__name__)
 
 HOST = 'https://ollama.com'
 KEY_ENV_PREFIX = 'OLLAMA_API_KEY_'
@@ -29,8 +26,7 @@ MAX_WORKERS = 10  # concurrent Ollama requests, shared by every caller in this p
 MAX_RETRIES = 2  # retries after the first attempt (3 attempts total per page)
 RETRY_BACKOFF_BASE = 2  # seconds
 RETRY_BACKOFF_CAP = 30  # seconds
-RETRYABLE_STATUS_CODES = {408, 500, 502, 503, 504}
-LIMIT_STATUS_CODES = {403, 429}  # this key's quota/subscription is exhausted - switch keys, don't retry it
+RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 SHARPEN_RADIUS = 2  # UnsharpMask: pixel radius of the blur used to detect edges
 SHARPEN_PERCENT = 200  # UnsharpMask: strength of the sharpening effect
@@ -62,29 +58,11 @@ def _load_keys() -> list[str]:
 
 
 _clients = [Client(host=HOST, headers={'Authorization': f"Bearer {key}"}) for key in _load_keys()]
-_limited = [False] * len(_clients)
-_index_cycle = itertools.cycle(range(len(_clients)))
+_clients_cycle = itertools.cycle(_clients)
 
 
 def get_client() -> Client:
-    """Return the next non-limited client in round-robin rotation across all
-    configured API keys, so requests are spread across accounts instead of
-    exhausting one free-tier limit. Keys previously marked via mark_limited()
-    are skipped."""
+    """Return the next client in round-robin rotation across all configured API keys,
+    so requests are spread across accounts instead of exhausting one free-tier limit."""
     with _lock:
-        for _ in range(len(_clients)):
-            i = next(_index_cycle)
-            if not _limited[i]:
-                return _clients[i]
-        raise RuntimeError("All configured Ollama API keys have hit their usage limit.")
-
-
-def mark_limited(client: Client) -> None:
-    """Mark the key behind this client as limited so future get_client() calls
-    skip it for the rest of this process's run."""
-    with _lock:
-        for i, c in enumerate(_clients):
-            if c is client and not _limited[i]:
-                _limited[i] = True
-                logger.warning(f"Ollama API key #{i + 1} hit its usage limit; switching to remaining keys.")
-                return
+        return next(_clients_cycle)
