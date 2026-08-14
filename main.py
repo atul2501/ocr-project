@@ -8,6 +8,8 @@ from model import (
     INVOICE_DIR,
     OUTPUT_PATH,
     executor,
+    has_required_identifiers,
+    is_target_document,
     logger,
     pdf_to_images,
     process_page,
@@ -52,6 +54,12 @@ async def _process_pdf(pdf_bytes: bytes):
         results = []
         for future in asyncio.as_completed(futures):
             key, result = await future
+            if not is_target_document(result):
+                logger.info(f"skipped (not tax invoice/PO): {key}")
+                continue
+            if not has_required_identifiers(result):
+                logger.info(f"skipped (missing invoice number and document type): {key}")
+                continue
             results.append(result)
             logger.info(f"done: {key}")
     finally:

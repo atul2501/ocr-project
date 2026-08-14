@@ -151,6 +151,27 @@ def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str,
         return key, {"error": f"{type(e).__name__}: {e}"}
 
 
+def is_target_document(result: dict) -> bool:
+    """False only when the model explicitly flagged this page as not a
+    Tax Invoice/PO; missing/unparseable values default to included so a
+    model hiccup on this one field doesn't silently drop a real invoice."""
+    value = result.get('metadata', {}).get('is_target_document', '')
+    return str(value).strip().lower() not in ('false', 'no', '0')
+
+
+def has_required_identifiers(result: dict) -> bool:
+    """False when both invoice_number and document_type came back empty -
+    i.e. the model couldn't identify enough about the page to be useful.
+    Errored pages (no "document" to check) are kept so failures stay
+    visible in the output instead of silently vanishing."""
+    if 'error' in result:
+        return True
+    document = result.get('document', {})
+    invoice_number = str(document.get('invoice_number', '')).strip()
+    document_type = str(document.get('document_type', '')).strip()
+    return bool(invoice_number or document_type)
+
+
 def main():
     pages = []
     for pdf_path in glob.glob(os.path.join(INVOICE_DIR, '*.pdf')):
@@ -164,6 +185,12 @@ def main():
 
     results = []
     for key, result in executor.map(lambda args: process_page(*args), pages):
+        if not is_target_document(result):
+            logger.info(f"skipped (not tax invoice/PO): {key}")
+            continue
+        if not has_required_identifiers(result):
+            logger.info(f"skipped (missing invoice number and document type): {key}")
+            continue
         results.append(result)
         logger.info(f"done: {key}")
 

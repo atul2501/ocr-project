@@ -1,0 +1,20 @@
+2026-08-14 15:23:00,787 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 15:23:11,305 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 15:23:13,763 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 15:23:21,959 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 15:23:40,149 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 15:23:40,152 INFO done: SUPREME_PET.pdf#page1
+2026-08-14 15:23:40,153 INFO done: SUPREME_PET.pdf#page2
+2026-08-14 15:23:40,153 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page3
+2026-08-14 15:23:40,153 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page4
+2026-08-14 15:23:40,153 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page5
+2026-08-14 16:56:42,770 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 16:56:49,665 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 16:57:00,678 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 16:57:01,391 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 16:57:01,471 INFO done: SUPREME_PET.pdf#page1
+2026-08-14 16:58:03,676 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-14 16:58:03,713 INFO done: SUPREME_PET.pdf#page2
+2026-08-14 16:58:03,714 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page3
+2026-08-14 16:58:03,714 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page4
+2026-08-14 16:58:03,714 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page5

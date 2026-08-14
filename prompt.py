@@ -30,6 +30,18 @@ IMPORTANT EXTRACTION RULES:
 - Use numeric values for quantities, rates, taxes and amounts when clearly readable.
 - Use an empty string "" when the document does not contain a particular field.
 
+DOCUMENT TYPE FILTER:
+- This system only extracts data from Tax Invoices (GST tax invoices) and
+  Purchase Orders (PO).
+- First determine what kind of document the image actually is.
+- If it is a Tax Invoice or a Purchase Order, set "metadata.is_target_document"
+  to true and extract all fields normally as instructed above.
+- If it is any other kind of document (e.g. delivery challan, LR/transporter
+  receipt, warehouse or storage paperwork, packing list, e-way bill copy,
+  bank statement, or anything else that is not a Tax Invoice or PO), set
+  "metadata.is_target_document" to false, and leave every other field as an
+  empty string "" - do not attempt to extract data from non-target documents.
+
 ALPHANUMERIC ID FIELDS - read each character individually, do not skim:
 - Commonly confused glyphs: 0 vs O, 1 vs I vs l, 5 vs S, 8 vs B, 6 vs G, 2 vs Z, 9 vs g/q.
   Look at the surrounding characters and the field's expected format below to decide
@@ -314,7 +326,8 @@ Return exactly this JSON structure:
     "stamp_present": "",
     "signature_present": "",
     "qr_code_present": "",
-    "barcode_present": ""
+    "barcode_present": "",
+    "is_target_document": ""
   },
 
   "required_fields": {
