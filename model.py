@@ -128,6 +128,21 @@ def extract_receipt_with_retry(image: bytes) -> dict:
     raise last_exc
 
 
+def is_blank_result(result: dict) -> bool:
+    """True if extraction found nothing usable - e.g. the model echoed the
+    empty template back for a page that isn't a Tax Invoice/PO (blank page,
+    cover sheet, etc.)."""
+    def _blank(value):
+        if isinstance(value, dict):
+            return all(_blank(v) for v in value.values())
+        if isinstance(value, list):
+            return all(_blank(v) for v in value)
+        if isinstance(value, str):
+            return not value.strip()
+        return value is None
+    return _blank(result)
+
+
 def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str, dict]:
     key = f"{os.path.basename(pdf_path)}#page{page_num}"
     try:
@@ -153,6 +168,9 @@ def main():
 
     results = []
     for key, result in executor.map(lambda args: process_page(*args), pages):
+        if is_blank_result(result):
+            logger.info(f"skipped (blank): {key}")
+            continue
         results.append(result)
         logger.info(f"done: {key}")
 

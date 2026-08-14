@@ -8,6 +8,7 @@ from model import (
     INVOICE_DIR,
     OUTPUT_PATH,
     executor,
+    is_blank_result,
     logger,
     pdf_to_images,
     process_page,
@@ -52,6 +53,9 @@ async def _process_pdf(pdf_bytes: bytes):
         results = []
         for future in asyncio.as_completed(futures):
             key, result = await future
+            if is_blank_result(result):
+                logger.info(f"skipped (blank): {key}")
+                continue
             results.append(result)
             logger.info(f"done: {key}")
     finally:

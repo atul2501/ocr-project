@@ -19,7 +19,7 @@ SHARPENED_DIR = 'output'
 # across whichever ones are non-empty here. An OLLAMA_API_KEY_<n> environment
 # variable, if set, overrides the entry at that position (1-indexed).
 API_KEYS = [
-    'cc76568fb2e040988cf13671da7b9d19.RcuniqYYf7DpS8xqgeOP1gRt',
+    'b328da5952a84796824791c58f883525.1aDsPaCS6j0Ohp4mMWP5gvjK',
 ]
 
 MAX_WORKERS = 10  # concurrent Ollama requests, shared by every caller in this process (CLI batch run + all API requests) so load never exceeds this regardless of how many PDFs come in at once; extra pages simply wait in the executor's internal queue
