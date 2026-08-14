@@ -12,20 +12,23 @@ Do not return markdown, explanations, comments or any text outside JSON.
 
 IMPORTANT EXTRACTION RULES:
 - Do not guess or invent any value.
-- If a value is missing, unreadable or uncertain, return null.
+- If a value is missing, unreadable or uncertain, return an empty string "".
 - Preserve values exactly as printed wherever possible.
 - Do not calculate missing tax, totals or amounts.
 - Do not confuse invoice number with PO number, LR number, delivery order,
   challan number, sales order or other reference numbers.
 - Distinguish Supplier/Vendor, Customer/Buyer, Bill-To and Ship-To.
 - Extract every individual invoice line item and every additional charge.
+  If there are multiple line items, include one entry per item in BOTH the
+  "items" array and the "required_fields.ITEM_LIST" array - do not collapse
+  multiple items into a single entry.
 - Extract GST components separately: CGST, SGST, IGST, UTGST and Cess.
 - Extract HSN/SAC codes whenever visible.
 - Extract Indian GSTIN, PAN, CIN and other statutory identifiers when visible.
 - Read clearly visible handwritten information, but do not guess unclear handwriting.
 - Keep dates in YYYY-MM-DD format when unambiguous.
 - Use numeric values for quantities, rates, taxes and amounts when clearly readable.
-- Use null when the document does not contain a particular field.
+- Use an empty string "" when the document does not contain a particular field.
 
 ALPHANUMERIC ID FIELDS - read each character individually, do not skim:
 - Commonly confused glyphs: 0 vs O, 1 vs I vs l, 5 vs S, 8 vs B, 6 vs G, 2 vs Z, 9 vs g/q.
@@ -34,253 +37,253 @@ ALPHANUMERIC ID FIELDS - read each character individually, do not skim:
 - GSTIN: exactly 15 characters - 2 digits (state code), 10 characters (PAN: 5 letters,
   4 digits, 1 letter), 1 digit (entity code), the letter "Z", 1 alphanumeric checksum.
   If the extracted value does not fit this pattern, re-examine the image before
-  returning it; if still uncertain, return null rather than a guess.
+  returning it; if still uncertain, return an empty string "" rather than a guess.
 - PAN: exactly 10 characters - 5 letters, 4 digits, 1 letter (e.g. AAAAA9999A).
 - Phone: digits only (plus an optional leading + and country code); re-check any
   digit that could be misread as a letter (e.g. B/8, S/5, O/0, G/6).
 - Email: must match name@domain.tld with no spaces; re-check characters that could
   be letter/digit confusions before returning.
 - If any of these fields fail their expected format after careful re-reading,
-  return null instead of an incorrect value.
+  return an empty string "" instead of an incorrect value.
 
 Return exactly this JSON structure:
 
 {
   "document": {
-    "document_type": null,
-    "document_title": null,
-    "invoice_number": null,
-    "invoice_date": null,
-    "invoice_reference_number": null,
-    "original_invoice_number": null,
-    "revision_number": null,
-    "currency": null,
-    "place_of_supply": null,
-    "supply_type": null,
-    "reverse_charge": null
+    "document_type": "",
+    "document_title": "",
+    "invoice_number": "",
+    "invoice_date": "",
+    "invoice_reference_number": "",
+    "original_invoice_number": "",
+    "revision_number": "",
+    "currency": "",
+    "place_of_supply": "",
+    "supply_type": "",
+    "reverse_charge": ""
   },
 
   "supplier": {
-    "name": null,
-    "legal_name": null,
-    "trade_name": null,
-    "vendor_code": null,
-    "address": null,
-    "city": null,
-    "state": null,
-    "state_code": null,
-    "country": null,
-    "pincode": null,
-    "gstin": null,
-    "pan": null,
-    "cin": null,
-    "tan": null,
-    "email": null,
-    "phone": null,
-    "website": null
+    "name": "",
+    "legal_name": "",
+    "trade_name": "",
+    "vendor_code": "",
+    "address": "",
+    "city": "",
+    "state": "",
+    "state_code": "",
+    "country": "",
+    "pincode": "",
+    "gstin": "",
+    "pan": "",
+    "cin": "",
+    "tan": "",
+    "email": "",
+    "phone": "",
+    "website": ""
   },
 
   "customer": {
-    "name": null,
-    "legal_name": null,
-    "customer_code": null,
-    "address": null,
-    "city": null,
-    "state": null,
-    "state_code": null,
-    "country": null,
-    "pincode": null,
-    "gstin": null,
-    "pan": null,
-    "email": null,
-    "phone": null
+    "name": "",
+    "legal_name": "",
+    "customer_code": "",
+    "address": "",
+    "city": "",
+    "state": "",
+    "state_code": "",
+    "country": "",
+    "pincode": "",
+    "gstin": "",
+    "pan": "",
+    "email": "",
+    "phone": ""
   },
 
   "bill_to": {
-    "name": null,
-    "address": null,
-    "city": null,
-    "state": null,
-    "state_code": null,
-    "pincode": null,
-    "gstin": null,
-    "pan": null
+    "name": "",
+    "address": "",
+    "city": "",
+    "state": "",
+    "state_code": "",
+    "pincode": "",
+    "gstin": "",
+    "pan": ""
   },
 
   "ship_to": {
-    "name": null,
-    "address": null,
-    "city": null,
-    "state": null,
-    "state_code": null,
-    "pincode": null,
-    "gstin": null,
-    "pan": null
+    "name": "",
+    "address": "",
+    "city": "",
+    "state": "",
+    "state_code": "",
+    "pincode": "",
+    "gstin": "",
+    "pan": ""
   },
 
   "purchase_order": {
-    "po_number": null,
-    "po_date": null,
-    "purchase_order_reference": null,
-    "purchase_requisition_number": null,
-    "contract_number": null,
-    "agreement_number": null,
-    "work_order_number": null
+    "po_number": "",
+    "po_date": "",
+    "purchase_order_reference": "",
+    "purchase_requisition_number": "",
+    "contract_number": "",
+    "agreement_number": "",
+    "work_order_number": ""
   },
 
   "delivery": {
-    "delivery_order_number": null,
-    "delivery_order_date": null,
-    "delivery_note_number": null,
-    "delivery_note_date": null,
-    "challan_number": null,
-    "challan_date": null,
-    "dispatch_date": null,
-    "delivery_date": null,
-    "eway_bill_number": null,
-    "lr_number": null,
-    "lr_date": null,
-    "transporter_name": null,
-    "vehicle_number": null,
-    "vehicle_type": null,
-    "from_location": null,
-    "to_location": null,
-    "place_of_dispatch": null,
-    "place_of_delivery": null
+    "delivery_order_number": "",
+    "delivery_order_date": "",
+    "delivery_note_number": "",
+    "delivery_note_date": "",
+    "challan_number": "",
+    "challan_date": "",
+    "dispatch_date": "",
+    "delivery_date": "",
+    "eway_bill_number": "",
+    "lr_number": "",
+    "lr_date": "",
+    "transporter_name": "",
+    "vehicle_number": "",
+    "vehicle_type": "",
+    "from_location": "",
+    "to_location": "",
+    "place_of_dispatch": "",
+    "place_of_delivery": ""
   },
 
   "items": [
     {
-      "line_number": null,
-      "item_code": null,
-      "material_code": null,
-      "lr_number": null,
-      "product_name": null,
-      "description": null,
-      "hsn_code": null,
-      "sac_code": null,
-      "quantity": null,
-      "uom": null,
-      "unit_price": null,
-      "gross_amount": null,
-      "discount": null,
-      "discount_percentage": null,
-      "taxable_value": null,
-      "gst_rate": null,
-      "cgst_rate": null,
-      "cgst_amount": null,
-      "sgst_rate": null,
-      "sgst_amount": null,
-      "igst_rate": null,
-      "igst_amount": null,
-      "utgst_rate": null,
-      "utgst_amount": null,
-      "cess_rate": null,
-      "cess_amount": null,
-      "other_charges": null,
-      "line_total": null
+      "line_number": "",
+      "item_code": "",
+      "material_code": "",
+      "lr_number": "",
+      "product_name": "",
+      "description": "",
+      "hsn_code": "",
+      "sac_code": "",
+      "quantity": "",
+      "uom": "",
+      "unit_price": "",
+      "gross_amount": "",
+      "discount": "",
+      "discount_percentage": "",
+      "taxable_value": "",
+      "gst_rate": "",
+      "cgst_rate": "",
+      "cgst_amount": "",
+      "sgst_rate": "",
+      "sgst_amount": "",
+      "igst_rate": "",
+      "igst_amount": "",
+      "utgst_rate": "",
+      "utgst_amount": "",
+      "cess_rate": "",
+      "cess_amount": "",
+      "other_charges": "",
+      "line_total": ""
     }
   ],
 
   "additional_charges": [
     {
-      "description": null,
-      "charge_type": null,
-      "quantity": null,
-      "rate": null,
-      "amount": null,
-      "taxable_value": null,
-      "gst_rate": null,
-      "cgst_amount": null,
-      "sgst_amount": null,
-      "igst_amount": null,
-      "total_amount": null
+      "description": "",
+      "charge_type": "",
+      "quantity": "",
+      "rate": "",
+      "amount": "",
+      "taxable_value": "",
+      "gst_rate": "",
+      "cgst_amount": "",
+      "sgst_amount": "",
+      "igst_amount": "",
+      "total_amount": ""
     }
   ],
 
   "tax": {
-    "taxable_amount": null,
-    "cgst_rate": null,
-    "cgst_amount": null,
-    "sgst_rate": null,
-    "sgst_amount": null,
-    "igst_rate": null,
-    "igst_amount": null,
-    "utgst_rate": null,
-    "utgst_amount": null,
-    "cess_rate": null,
-    "cess_amount": null,
-    "other_tax": null,
-    "total_tax": null
+    "taxable_amount": "",
+    "cgst_rate": "",
+    "cgst_amount": "",
+    "sgst_rate": "",
+    "sgst_amount": "",
+    "igst_rate": "",
+    "igst_amount": "",
+    "utgst_rate": "",
+    "utgst_amount": "",
+    "cess_rate": "",
+    "cess_amount": "",
+    "other_tax": "",
+    "total_tax": ""
   },
 
   "amounts": {
-    "subtotal": null,
-    "gross_amount": null,
-    "total_discount": null,
-    "freight": null,
-    "transportation_charges": null,
-    "packing_charges": null,
-    "loading_charges": null,
-    "unloading_charges": null,
-    "insurance_charges": null,
-    "handling_charges": null,
-    "other_charges": null,
-    "taxable_amount": null,
-    "total_tax": null,
-    "round_off": null,
-    "advance_paid": null,
-    "total_amount": null,
-    "amount_paid": null,
-    "balance_due": null,
-    "amount_in_words": null
+    "subtotal": "",
+    "gross_amount": "",
+    "total_discount": "",
+    "freight": "",
+    "transportation_charges": "",
+    "packing_charges": "",
+    "loading_charges": "",
+    "unloading_charges": "",
+    "insurance_charges": "",
+    "handling_charges": "",
+    "other_charges": "",
+    "taxable_amount": "",
+    "total_tax": "",
+    "round_off": "",
+    "advance_paid": "",
+    "total_amount": "",
+    "amount_paid": "",
+    "balance_due": "",
+    "amount_in_words": ""
   },
 
   "payment": {
-    "payment_terms": null,
-    "due_date": null,
-    "credit_period_days": null,
-    "payment_method": null,
-    "bank_name": null,
-    "bank_account_number": null,
-    "ifsc_code": null,
-    "upi_id": null
+    "payment_terms": "",
+    "due_date": "",
+    "credit_period_days": "",
+    "payment_method": "",
+    "bank_name": "",
+    "bank_account_number": "",
+    "ifsc_code": "",
+    "upi_id": ""
   },
 
   "logistics": {
-    "vehicle_number": null,
-    "vehicle_type": null,
-    "container_number": null,
-    "container_type": null,
-    "container_details": null,
-    "weight": null,
-    "weight_unit": null,
-    "freight_amount": null,
-    "detention_charges": null,
-    "demurrage_charges": null,
-    "parking_charges": null,
-    "loading_charges": null,
-    "unloading_charges": null,
-    "empty_unloading_charges": null
+    "vehicle_number": "",
+    "vehicle_type": "",
+    "container_number": "",
+    "container_type": "",
+    "container_details": "",
+    "weight": "",
+    "weight_unit": "",
+    "freight_amount": "",
+    "detention_charges": "",
+    "demurrage_charges": "",
+    "parking_charges": "",
+    "loading_charges": "",
+    "unloading_charges": "",
+    "empty_unloading_charges": ""
   },
 
   "gst_compliance": {
-    "supplier_gstin": null,
-    "customer_gstin": null,
-    "place_of_supply": null,
-    "place_of_supply_state_code": null,
-    "reverse_charge": null,
-    "irn": null,
-    "acknowledgement_number": null,
-    "acknowledgement_date": null,
-    "qr_code_data": null,
-    "eway_bill_number": null,
-    "gst_taxable_value": null,
-    "cgst": null,
-    "sgst": null,
-    "igst": null,
-    "utgst": null,
-    "cess": null
+    "supplier_gstin": "",
+    "customer_gstin": "",
+    "place_of_supply": "",
+    "place_of_supply_state_code": "",
+    "reverse_charge": "",
+    "irn": "",
+    "acknowledgement_number": "",
+    "acknowledgement_date": "",
+    "qr_code_data": "",
+    "eway_bill_number": "",
+    "gst_taxable_value": "",
+    "cgst": "",
+    "sgst": "",
+    "igst": "",
+    "utgst": "",
+    "cess": ""
   },
 
   "references": {
@@ -297,21 +300,47 @@ Return exactly this JSON structure:
   },
 
   "approval": {
-    "authorized_signatory_name": null,
-    "receiver_name": null,
-    "receiver_signature_present": null,
-    "supplier_signature_present": null,
-    "company_stamp_present": null
+    "authorized_signatory_name": "",
+    "receiver_name": "",
+    "receiver_signature_present": "",
+    "supplier_signature_present": "",
+    "company_stamp_present": ""
   },
 
   "metadata": {
-    "page_type": null,
-    "language": null,
-    "handwritten_content_present": null,
-    "stamp_present": null,
-    "signature_present": null,
-    "qr_code_present": null,
-    "barcode_present": null
+    "page_type": "",
+    "language": "",
+    "handwritten_content_present": "",
+    "stamp_present": "",
+    "signature_present": "",
+    "qr_code_present": "",
+    "barcode_present": ""
+  },
+
+  "required_fields": {
+    "IRN_NO": "",
+    "IRN_DATE": "",
+    "INVOICE_NUMBER": "",
+    "ORDER_NUMBER": "",
+    "VENDOR_GST_NO": "",
+    "BASE_VALUE": "",
+    "IGST": "",
+    "CGST": "",
+    "SGST": "",
+    "GROSS_TOTAL": "",
+    "INVOICE_DATE": "",
+    "ORDER_DATE": "",
+    "VENDOR_PAN_NO": "",
+    "CUSTOMER_PAN_NO": "",
+    "ITEM_LIST": [
+      {
+        "DESCRIPTION": "",
+        "HSN": "",
+        "QTY": "",
+        "UNIT_PRICE": "",
+        "AMOUNT": ""
+      }
+    ]
   }
 }
 """

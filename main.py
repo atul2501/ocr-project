@@ -1,183 +1,73 @@
+import asyncio
 import glob
-import io
 import json
-import logging
 import os
-import random
-import re
-import time
-from concurrent.futures import ThreadPoolExecutor
-from prompt import PROMPTS
-import httpx
-import pymupdf
-from ollama import Client, ResponseError
-from PIL import Image, ImageFilter, ImageOps
-
-client = Client(
-    host='https://ollama.com',
-    headers={'Authorization': f"Bearer f2fdab4ff99e47d8b975a4db37cbf6d6.uFRcUfigvmEhzHQ8XDXNcyGP"},
+from tempfile import NamedTemporaryFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from model import (
+    INVOICE_DIR,
+    OUTPUT_PATH,
+    executor,
+    logger,
+    pdf_to_images,
+    process_page,
 )
 
+app = FastAPI(title="Receipt OCR API")
 
-MODEL = 'gemma4:31b'  # vision-capable, available on this account's free tier
-
-INVOICE_DIR = 'invoice'
-PDF_ZOOM = 5  # render scale; higher = sharper but slower/bigger
-OUTPUT_PATH = 'out.json'
-LOG_PATH = 'process.log'
-SHARPENED_DIR = 'output'
-
-logging.basicConfig(
-    filename=LOG_PATH,
-    filemode='a',
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(message)s',
-)
-logger = logging.getLogger(__name__)
-
-MAX_WORKERS = 10  # concurrent Ollama requests, shared by every caller in this process (CLI batch run + all API requests) so load never exceeds this regardless of how many PDFs come in at once; extra pages simply wait in the executor's internal queue
-MAX_RETRIES = 2  # retries after the first attempt (3 attempts total per page)
-RETRY_BACKOFF_BASE = 2  # seconds
-RETRY_BACKOFF_CAP = 30  # seconds
-RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
-
-SHARPEN_RADIUS = 2  # UnsharpMask: pixel radius of the blur used to detect edges #2
-SHARPEN_PERCENT = 200  # UnsharpMask: strength of the sharpening effect #150
-SHARPEN_THRESHOLD = 1  # UnsharpMask: minimum brightness change to be sharpened (avoids amplifying noise) #3
-CONTRAST_CUTOFF = 1  # autocontrast: percent of darkest/lightest pixels clipped before stretching the range
-
-PROMPT = (PROMPTS)
-
-# Single process-wide executor. Reused across the CLI batch run (main()) and
-# every API request (api.py) so concurrent OCR calls are always capped at
-# MAX_WORKERS instead of each caller spinning up its own pool.
-executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+@app.get("/")
+def root():
+    return {
+        "message": "Receipt OCR API is running. See /docs for interactive testing.",
+        "endpoints": ["/health", "POST /extract", "POST /extract/binary"],
+    }
 
 
-def sharpen_image(png_bytes: bytes) -> bytes:
-    with Image.open(io.BytesIO(png_bytes)) as img:
-        gray = ImageOps.autocontrast(img.convert('L'), cutoff=CONTRAST_CUTOFF)
-        sharpened = gray.filter(
-            ImageFilter.UnsharpMask(
-                radius=SHARPEN_RADIUS,
-                percent=SHARPEN_PERCENT,
-                threshold=SHARPEN_THRESHOLD,
-            )
+@app.get("/health")
+def health():
+    return {"status": "Sucess"}
+
+async def _process_pdf(pdf_bytes: bytes):
+    with NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(pdf_bytes)
+        tmp_path = tmp.name
+
+    try:
+        loop = asyncio.get_running_loop()
+        # Rendering/sharpening is quick CPU work; run it off the event loop
+        # on the default executor so it doesn't steal an OCR queue slot.
+        pages = await loop.run_in_executor(
+            None, lambda: list(enumerate(pdf_to_images(tmp_path), start=1))
         )
-        buf = io.BytesIO()
-        sharpened.save(buf, format='PNG')
-        return buf.getvalue()
+
+        # Submit to the shared process-wide executor (main.executor, capped
+        # at MAX_WORKERS) and await the futures instead of blocking on them,
+        # so extra pages/requests queue behind the cap without freezing the
+        # FastAPI event loop for other concurrent uploads.
+        futures = [
+            loop.run_in_executor(executor, process_page, tmp_path, page_num, image_bytes)
+            for page_num, image_bytes in pages
+        ]
+
+        results = []
+        for future in asyncio.as_completed(futures):
+            key, result = await future
+            results.append(result)
+            logger.info(f"done: {key}")
+    finally:
+        os.remove(tmp_path)
+
+    return results
 
 
-def save_sharpened_page(pdf_path: str, page_num: int, image_bytes: bytes) -> str:
-    os.makedirs(SHARPENED_DIR, exist_ok=True)
-    stem = os.path.splitext(os.path.basename(pdf_path))[0]
-    out_path = os.path.join(SHARPENED_DIR, f"{stem}_page{page_num}.pdf")
-    with Image.open(io.BytesIO(image_bytes)) as img:
-        img.convert('RGB').save(out_path, format='PDF')
-    return out_path
 
+@app.post("/extract")
+async def extract_binary(request: Request):
+    """Upload a single PDF (Postman: Body > binary) and get its extracted JSON back."""
+    pdf_bytes = await request.body()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="Empty request body")
+    if not pdf_bytes.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-def pdf_to_images(pdf_path: str) -> list[bytes]:
-    doc = pymupdf.open(pdf_path)
-    matrix = pymupdf.Matrix(PDF_ZOOM, PDF_ZOOM)
-    images = []
-    for page_num, page in enumerate(doc, start=1):
-        image_bytes = sharpen_image(page.get_pixmap(matrix=matrix).tobytes('png'))
-        save_sharpened_page(pdf_path, page_num, image_bytes)
-        images.append(image_bytes)
-    doc.close()
-    return images
-
-
-def extract_receipt(image) -> dict:
-    response = client.chat(
-        model=MODEL,
-        messages=[
-            {
-                'role': 'user',
-                'content': PROMPT,
-                'images': [image],
-            }
-        ],
-        format='json',
-    )
-    text = response['message']['content']
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if not match:
-            raise ValueError(f"Model did not return valid JSON:\n{text}")
-        return json.loads(match.group(0))
-
-
-def extract_receipt_with_retry(image: bytes) -> dict:
-    last_exc = None
-    for attempt in range(1, MAX_RETRIES + 2):
-        try:
-            return extract_receipt(image)
-        except ResponseError as e:
-            if e.status_code not in RETRYABLE_STATUS_CODES:
-                raise  # e.g. 404 model-not-found, 403 needs-subscription: never succeeds
-            last_exc = e
-            logger.warning(f"attempt {attempt} failed (status {e.status_code}): {e}")
-        except (ConnectionError, httpx.RequestError, ValueError) as e:
-            last_exc = e
-            logger.warning(f"attempt {attempt} failed: {type(e).__name__}: {e}")
-
-        if attempt <= MAX_RETRIES:
-            delay = min(RETRY_BACKOFF_BASE * 2 ** (attempt - 1), RETRY_BACKOFF_CAP)
-            time.sleep(delay + random.uniform(0, delay * 0.25))
-
-    raise last_exc
-
-
-def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str, dict]:
-    key = f"{os.path.basename(pdf_path)}#page{page_num}"
-    try:
-        return key, extract_receipt_with_retry(image_bytes)
-    except Exception as e:
-        # logger.exception (not .error) so the full traceback lands in
-        # process.log, not just the message - needed to debug anything
-        # unexpected later, not just the known retryable cases above.
-        logger.exception(f"failed: {key}")
-        return key, {"error": f"{type(e).__name__}: {e}"}
-
-
-def main():
-    pages = []
-    for pdf_path in glob.glob(os.path.join(INVOICE_DIR, '*.pdf')):
-        try:
-            for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
-                pages.append((pdf_path, page_num, image_bytes))
-        except Exception:
-            # A corrupt/unreadable PDF shouldn't take the whole batch down;
-            # log it and keep going with the rest of the files.
-            logger.exception(f"failed to render {os.path.basename(pdf_path)}")
-
-    results = []
-    for key, result in executor.map(lambda args: process_page(*args), pages):
-        results.append(result)
-        logger.info(f"done: {key}")
-
-    try:
-        with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-    except OSError:
-        logger.exception(f"failed to write {OUTPUT_PATH}")
-        raise
-
-    print(json.dumps(results, indent=2, ensure_ascii=False))
-
-
-if __name__ == '__main__':
-    try:
-        main()
-    except Exception:
-        # Catch-all so any crash (bad INVOICE_DIR, disk full, etc.) is
-        # recorded in process.log with a full traceback, not just printed
-        # to the console and lost.
-        logger.exception("main() crashed")
-        raise
+    return await _process_pdf(pdf_bytes)
