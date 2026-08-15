@@ -33,11 +33,22 @@ DOCUMENT TYPE FILTER:
 - This system only extracts data from Tax Invoices (GST tax invoices) and
   Purchase Orders (PO).
 - First determine what kind of document the image actually is.
-- If it is a Tax Invoice or a Purchase Order, set "METADATA.IS_TARGET_DOCUMENT"
-  to true and extract all fields normally as instructed above.
-- If it is any other kind of document (e.g. delivery challan, LR/transporter
-  receipt, warehouse or storage paperwork, packing list, e-way bill copy,
-  bank statement, or anything else that is not a Tax Invoice or PO), set
+- A document counts as a Tax Invoice regardless of its literal header
+  wording as long as it has ALL of the following: the issuing party's GSTIN,
+  one or more itemized charges/quantities/amounts, and a total amount
+  payable. This includes GTA/transporter/logistics documents headed just
+  "BILL" or "FREIGHT BILL" instead of "TAX INVOICE" - treat these as target
+  documents too, since they are genuine invoices for GST purposes even if
+  the header doesn't literally say so. Many such bills are issued under GST
+  reverse charge, so no CGST/SGST/IGST amount appears on the page itself -
+  that alone does not disqualify it.
+- If it is a Tax Invoice (by the definition above) or a Purchase Order, set
+  "METADATA.IS_TARGET_DOCUMENT" to true and extract all fields normally as
+  instructed above.
+- If it is any other kind of document (e.g. a delivery challan, LR/weighment/
+  transporter receipt with no amount payable, warehouse or storage
+  paperwork, packing list, e-way bill copy, bank statement, or anything else
+  that is not a Tax Invoice or PO by the definition above), set
   "METADATA.IS_TARGET_DOCUMENT" to false, and leave every other field as an
   empty string "" - do not attempt to extract data from non-target documents.
 
@@ -270,6 +281,7 @@ Return exactly this JSON structure:
     "WEIGHT": "",
     "WEIGHT_UNIT": "",
     "FREIGHT_AMOUNT": "",
+    "WEIGHMENT_CHARGES": "",
     "DETENTION_CHARGES": "",
     "DEMURRAGE_CHARGES": "",
     "PARKING_CHARGES": "",

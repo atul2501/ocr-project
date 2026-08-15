@@ -174,6 +174,33 @@ def is_blank_result(result: dict) -> bool:
     return _blank(result)
 
 
+def _first_value(*values):
+    """Return the first non-blank value from a sequence of extracted
+    fields - several sections of the schema carry the same fact under
+    different keys (e.g. CUSTOMER.GSTIN vs GST_COMPLIANCE.CUSTOMER_GSTIN),
+    and the model doesn't always fill in the same one."""
+    for v in values:
+        if v not in ("", None):
+            return v
+    return ""
+
+
+# LOGISTICS charge fields the model can fill in with a named amount (e.g.
+# "WEIGHMENT CHARGES : 200.00" printed on a transporter invoice) that isn't
+# a proper line item in ITEMS or ADDITIONAL_CHARGES - each becomes its own
+# ITEM_LIST entry. FREIGHT_AMOUNT is excluded: freight is already carried
+# as the primary row in ITEMS, so including it here would double it up.
+LOGISTICS_CHARGE_LABELS = {
+    "WEIGHMENT_CHARGES": "Weighment Charges",
+    "PARKING_CHARGES": "Parking Charges",
+    "LOADING_CHARGES": "Loading Charges",
+    "UNLOADING_CHARGES": "Unloading Charges",
+    "EMPTY_UNLOADING_CHARGES": "Empty Unloading Charges",
+    "DETENTION_CHARGES": "Detention Charges",
+    "DEMURRAGE_CHARGES": "Demurrage Charges",
+}
+
+
 def _to_float(value) -> float:
     """Parse an extracted amount/quantity string into a real number for
     SAP - "", None or anything unparseable becomes 0 (SAP's DEC/NUMC fields
@@ -211,6 +238,17 @@ class InvoiceItem:
             AMOUNT=_to_float(item.get("LINE_TOTAL", "")),
         )
 
+    @classmethod
+    def from_charge(cls, charge: dict) -> "InvoiceItem":
+        """An entry from the "ADDITIONAL_CHARGES" array - same idea as a
+        line item but keyed AMOUNT/TOTAL_AMOUNT instead of LINE_TOTAL."""
+        return cls(
+            DESCRIPTION=charge.get("DESCRIPTION", "") or charge.get("CHARGE_TYPE", ""),
+            QTY=_to_float(charge.get("QUANTITY", "")),
+            UNIT_PRICE=_to_float(charge.get("RATE", "")),
+            AMOUNT=_to_float(_first_value(charge.get("AMOUNT"), charge.get("TOTAL_AMOUNT"))),
+        )
+
 
 @dataclass
 class Invoice:
@@ -221,6 +259,8 @@ class Invoice:
     INVOICE_NUMBER: str = ""
     ORDER_NUMBER: str = ""
     VENDOR_GST_NO: str = ""
+    CUSTOMER_GST_NO: str = ""
+    PLACE_OF_SUPPLY: str = ""
     BASE_VALUE: float = 0.0
     IGST: float = 0.0
     CGST: float = 0.0
@@ -241,13 +281,46 @@ class Invoice:
         tax = data.get("TAX", {})
         amounts = data.get("AMOUNTS", {})
         gst_compliance = data.get("GST_COMPLIANCE", {})
+
+        item_list = cls._build_item_list(data)
+        gross_total = _to_float(amounts.get("TOTAL_AMOUNT", ""))
+        total_tax = (
+            _to_float(tax.get("IGST_AMOUNT", ""))
+            + _to_float(tax.get("CGST_AMOUNT", ""))
+            + _to_float(tax.get("SGST_AMOUNT", ""))
+        )
+
+        if total_tax == 0 and gross_total:
+            # No GST is charged on this invoice, so the taxable value is by
+            # definition the same as the total - trust the printed total
+            # over TAX.TAXABLE_AMOUNT, which the model sometimes fills with
+            # a single line item's value instead of a real taxable-amount
+            # field when the document prints no such field at all.
+            base_value = gross_total
+        else:
+            # Some invoices never print a "Taxable Amount"/"Subtotal" line -
+            # fall back through the duplicate AMOUNTS field, then to the sum
+            # of the line items, rather than reporting 0.0.
+            base_value_raw = _first_value(
+                tax.get("TAXABLE_AMOUNT"),
+                amounts.get("TAXABLE_AMOUNT"),
+                amounts.get("SUBTOTAL"),
+            )
+            base_value = (
+                sum(item.AMOUNT for item in item_list)
+                if not base_value_raw and item_list
+                else _to_float(base_value_raw)
+            )
+
         return cls(
             IRN_NO=gst_compliance.get("IRN", ""),
             IRN_DATE=gst_compliance.get("ACKNOWLEDGEMENT_DATE", ""),
             INVOICE_NUMBER=document.get("INVOICE_NUMBER", ""),
             ORDER_NUMBER=purchase_order.get("PO_NUMBER", ""),
             VENDOR_GST_NO=supplier.get("GSTIN", ""),
-            BASE_VALUE=_to_float(tax.get("TAXABLE_AMOUNT", "")),
+            CUSTOMER_GST_NO=_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN")),
+            PLACE_OF_SUPPLY=_first_value(document.get("PLACE_OF_SUPPLY"), gst_compliance.get("PLACE_OF_SUPPLY")),
+            BASE_VALUE=base_value,
             IGST=_to_float(tax.get("IGST_AMOUNT", "")),
             CGST=_to_float(tax.get("CGST_AMOUNT", "")),
             SGST=_to_float(tax.get("SGST_AMOUNT", "")),
@@ -256,8 +329,41 @@ class Invoice:
             ORDER_DATE=purchase_order.get("PO_DATE", ""),
             VENDOR_PAN_NO=supplier.get("PAN", ""),
             CUSTOMER_PAN_NO=customer.get("PAN", ""),
-            ITEM_LIST=[InvoiceItem.from_dict(item) for item in data.get("ITEMS", [])],
+            ITEM_LIST=item_list,
         )
+
+    @staticmethod
+    def _build_item_list(data: dict) -> list["InvoiceItem"]:
+        """Combine the proper "ITEMS" line items with any entries in
+        "ADDITIONAL_CHARGES" and any named LOGISTICS charge amounts
+        (weighment, parking, detention, ...) into one flat list - all three
+        sections can carry billable lines depending on how the source
+        invoice is laid out.
+
+        The model frequently echoes the same charge into both
+        ADDITIONAL_CHARGES and its matching LOGISTICS field (e.g. a
+        "WEIGHTMENT CHARGES: 200.00" line shows up as both an
+        ADDITIONAL_CHARGES entry and LOGISTICS.WEIGHMENT_CHARGES). Track
+        amounts already added from ADDITIONAL_CHARGES and skip a LOGISTICS
+        charge that repeats one, so it isn't double-counted."""
+        items = [InvoiceItem.from_dict(item) for item in data.get("ITEMS", [])]
+
+        additional_charges = [
+            InvoiceItem.from_charge(charge)
+            for charge in data.get("ADDITIONAL_CHARGES", [])
+            if _to_float(_first_value(charge.get("AMOUNT"), charge.get("TOTAL_AMOUNT")))
+        ]
+        items.extend(additional_charges)
+        seen_charge_amounts = {round(item.AMOUNT, 2) for item in additional_charges}
+
+        logistics = data.get("LOGISTICS", {})
+        for key, label in LOGISTICS_CHARGE_LABELS.items():
+            amount = _to_float(logistics.get(key))
+            if amount and round(amount, 2) not in seen_charge_amounts:
+                items.append(InvoiceItem(DESCRIPTION=label, AMOUNT=amount))
+                seen_charge_amounts.add(round(amount, 2))
+
+        return items
 
     def to_dict(self) -> dict:
         """Every field is always present - SAP expects a fixed set of keys
@@ -273,15 +379,40 @@ def group_into_invoices(page_results: list[dict]) -> list[Invoice]:
     """Turn a flat list of per-page extraction dicts into one Invoice per
     distinct INVOICE_NUMBER - pages that share an invoice number (e.g. a
     multi-page invoice) are merged into a single Invoice with combined
-    ITEM_LIST; distinct invoice numbers each get their own Invoice."""
+    ITEM_LIST; distinct invoice numbers each get their own Invoice.
+
+    Some documents get scanned/photographed as more than one page for the
+    same invoice number - e.g. both the government e-Invoice/IRP printout
+    and the supplier's full letterhead Tax Invoice for the same sale - each
+    showing the identical line items. DESCRIPTION is the field most likely
+    to come back slightly different between two OCR passes of the same
+    text (a misread digit, extra whitespace), so fingerprint each item by
+    its numeric/code fields only (HSN, QTY, UNIT_PRICE, AMOUNT) and skip an
+    incoming item whose fingerprint repeats one already recorded for that
+    invoice number - those fields are printed numbers/codes, not free text,
+    and are far more likely to OCR identically across two scans of the same
+    line. A genuinely distinct item with a coincidentally identical
+    HSN/qty/price/amount combination is rare enough to accept the risk,
+    same tradeoff already made for the LOGISTICS/ADDITIONAL_CHARGES
+    dedup above."""
     invoices_by_number: dict[str, Invoice] = {}
+    seen_items_by_number: dict[str, set] = {}
     order: list[str] = []
     for i, page in enumerate(page_results):
         invoice = Invoice.from_dict(page)
         key = invoice.INVOICE_NUMBER or f"__unknown_{i}"
         if key in invoices_by_number:
-            invoices_by_number[key].ITEM_LIST.extend(invoice.ITEM_LIST)
+            existing = invoices_by_number[key]
+            seen = seen_items_by_number[key]
+            for item in invoice.ITEM_LIST:
+                fingerprint = (item.HSN, item.QTY, item.UNIT_PRICE, item.AMOUNT)
+                if fingerprint not in seen:
+                    existing.ITEM_LIST.append(item)
+                    seen.add(fingerprint)
         else:
+            seen_items_by_number[key] = {
+                (item.HSN, item.QTY, item.UNIT_PRICE, item.AMOUNT) for item in invoice.ITEM_LIST
+            }
             invoices_by_number[key] = invoice
             order.append(key)
     return [invoices_by_number[k] for k in order]

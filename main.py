@@ -22,7 +22,7 @@ app = FastAPI(title="Receipt OCR API")
 def root():
     return {
         "message": "Receipt OCR API is running. See /docs for interactive testing.",
-        "endpoints": ["/health", "POST /extract", "POST /extract/binary"],
+        "endpoints": ["/health", "POST /extract"],
     }
 
 
