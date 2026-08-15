@@ -1,266 +1,98 @@
-2026-08-14 15:23:00,787 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 15:23:11,305 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 15:23:13,763 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 15:23:21,959 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 15:23:40,149 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 15:23:40,152 INFO done: SUPREME_PET.pdf#page1
-2026-08-14 15:23:40,153 INFO done: SUPREME_PET.pdf#page2
-2026-08-14 15:23:40,153 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page3
-2026-08-14 15:23:40,153 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page4
-2026-08-14 15:23:40,153 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page5
-2026-08-14 16:56:42,770 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 16:56:49,665 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 16:57:00,678 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 16:57:01,391 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 16:57:01,471 INFO done: SUPREME_PET.pdf#page1
-2026-08-14 16:58:03,676 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 16:58:03,713 INFO done: SUPREME_PET.pdf#page2
-2026-08-14 16:58:03,714 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page3
-2026-08-14 16:58:03,714 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page4
-2026-08-14 16:58:03,714 INFO skipped (not tax invoice/PO): SUPREME_PET.pdf#page5
-2026-08-14 17:57:11,075 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 17:57:11,081 INFO done: tmp_rn1rys2.pdf#page2
-2026-08-14 17:57:18,400 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 17:57:18,408 INFO done: tmp_rn1rys2.pdf#page1
-2026-08-14 17:57:23,827 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 17:57:23,928 INFO done: tmp_rn1rys2.pdf#page3
-2026-08-14 18:06:31,429 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 18:06:31,438 INFO done: tmpea7egypr.pdf#page1
-2026-08-14 18:06:38,124 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 18:06:38,129 INFO done: tmpea7egypr.pdf#page2
-2026-08-14 18:06:43,966 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 18:06:43,969 INFO done: tmpea7egypr.pdf#page3
-2026-08-14 18:51:07,374 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:51:07,374 WARNING attempt 1 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 5b0ffd8b-400c-4026-82f8-123074cc34cc) (status code: 429)
-2026-08-14 18:51:08,153 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:51:08,154 WARNING attempt 1 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 7b9df6cc-c266-4c40-971b-ac4318783ab3) (status code: 429)
-2026-08-14 18:51:08,886 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:51:08,886 WARNING attempt 1 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 99ccb9cb-7ee0-4879-b97e-ef4a698c8364) (status code: 429)
-2026-08-14 18:51:10,713 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:51:10,713 WARNING attempt 2 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 65d81e52-9dd3-4c16-9cb0-5ba38d38698f) (status code: 429)
-2026-08-14 18:51:13,268 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:51:13,269 WARNING attempt 2 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 37439002-ed5a-4190-86dd-9e54b9541a45) (status code: 429)
-2026-08-14 18:51:13,592 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:51:13,593 WARNING attempt 2 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: f3175a06-85fd-4a37-9a64-f4b0b28bc7c2) (status code: 429)
-2026-08-14 18:51:16,448 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:51:16,449 WARNING attempt 3 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 53484947-6736-4dc3-ba18-8b9d600dcca3) (status code: 429)
-2026-08-14 18:51:16,449 ERROR failed: tmp6uivhi66.pdf#page3
-Traceback (most recent call last):
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 149, in process_page
-    return key, extract_receipt_with_retry(image_bytes)
-                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 128, in extract_receipt_with_retry
-    raise last_exc
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 114, in extract_receipt_with_retry
-    return extract_receipt(image)
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 88, in extract_receipt
-    response = get_client().chat(
-        model=MODEL,
-    ...<7 lines>...
-        format='json',
-    )
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 387, in chat
-    return self._request(
-           ~~~~~~~~~~~~~^
-      ChatResponse,
-      ^^^^^^^^^^^^^
-    ...<14 lines>...
-      stream=stream,
-      ^^^^^^^^^^^^^^
-    )
-    ^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 199, in _request
-    return cls(**self._request_raw(*args, **kwargs).json())
-                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 143, in _request_raw
-    raise ResponseError(e.response.text, e.response.status_code) from None
-ollama._types.ResponseError: you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 53484947-6736-4dc3-ba18-8b9d600dcca3) (status code: 429)
-2026-08-14 18:51:16,485 INFO done: tmp6uivhi66.pdf#page3
-2026-08-14 18:51:19,737 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:51:19,738 WARNING attempt 3 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: e9c6d4f6-961b-4da8-9fad-453d59469754) (status code: 429)
-2026-08-14 18:51:19,738 ERROR failed: tmp6uivhi66.pdf#page2
-Traceback (most recent call last):
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 149, in process_page
-    return key, extract_receipt_with_retry(image_bytes)
-                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 128, in extract_receipt_with_retry
-    raise last_exc
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 114, in extract_receipt_with_retry
-    return extract_receipt(image)
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 88, in extract_receipt
-    response = get_client().chat(
-        model=MODEL,
-    ...<7 lines>...
-        format='json',
-    )
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 387, in chat
-    return self._request(
-           ~~~~~~~~~~~~~^
-      ChatResponse,
-      ^^^^^^^^^^^^^
-    ...<14 lines>...
-      stream=stream,
-      ^^^^^^^^^^^^^^
-    )
-    ^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 199, in _request
-    return cls(**self._request_raw(*args, **kwargs).json())
-                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 143, in _request_raw
-    raise ResponseError(e.response.text, e.response.status_code) from None
-ollama._types.ResponseError: you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: e9c6d4f6-961b-4da8-9fad-453d59469754) (status code: 429)
-2026-08-14 18:51:19,740 INFO done: tmp6uivhi66.pdf#page2
-2026-08-14 18:51:20,666 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:51:20,667 WARNING attempt 3 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: e5afacff-7e56-4a78-b77f-2f4addf45c9a) (status code: 429)
-2026-08-14 18:51:20,667 ERROR failed: tmp6uivhi66.pdf#page1
-Traceback (most recent call last):
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 149, in process_page
-    return key, extract_receipt_with_retry(image_bytes)
-                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 128, in extract_receipt_with_retry
-    raise last_exc
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 114, in extract_receipt_with_retry
-    return extract_receipt(image)
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 88, in extract_receipt
-    response = get_client().chat(
-        model=MODEL,
-    ...<7 lines>...
-        format='json',
-    )
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 387, in chat
-    return self._request(
-           ~~~~~~~~~~~~~^
-      ChatResponse,
-      ^^^^^^^^^^^^^
-    ...<14 lines>...
-      stream=stream,
-      ^^^^^^^^^^^^^^
-    )
-    ^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 199, in _request
-    return cls(**self._request_raw(*args, **kwargs).json())
-                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 143, in _request_raw
-    raise ResponseError(e.response.text, e.response.status_code) from None
-ollama._types.ResponseError: you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: e5afacff-7e56-4a78-b77f-2f4addf45c9a) (status code: 429)
-2026-08-14 18:51:20,669 INFO done: tmp6uivhi66.pdf#page1
-2026-08-14 18:57:29,840 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:57:29,840 WARNING attempt 1 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: cf2a56bc-263d-431f-beb7-4540f26f9fda) (status code: 429)
-2026-08-14 18:57:30,754 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:57:30,755 WARNING attempt 1 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 91c36a4d-a1d2-4b09-82d0-dcab3cf7db30) (status code: 429)
-2026-08-14 18:57:30,995 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:57:30,995 WARNING attempt 1 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 1c1f3d13-5de4-42c6-90dd-f8807b19216c) (status code: 429)
-2026-08-14 18:57:33,527 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:57:33,528 WARNING attempt 2 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 0ac8f575-3f90-400e-b5f0-1623ce922f48) (status code: 429)
-2026-08-14 18:57:35,103 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:57:35,104 WARNING attempt 2 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 11a68f62-7d21-4fbe-b38d-b6d4e102f465) (status code: 429)
-2026-08-14 18:57:36,622 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:57:36,623 WARNING attempt 2 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 2f811083-d2b9-4bfb-a442-ec500f4c6e44) (status code: 429)
-2026-08-14 18:57:38,792 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:57:38,792 WARNING attempt 3 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 853ab4ae-02a2-4c6b-8719-1ffb53f64da9) (status code: 429)
-2026-08-14 18:57:38,792 ERROR failed: tmp__83ovnl.pdf#page3
-Traceback (most recent call last):
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 149, in process_page
-    return key, extract_receipt_with_retry(image_bytes)
-                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 128, in extract_receipt_with_retry
-    raise last_exc
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 114, in extract_receipt_with_retry
-    return extract_receipt(image)
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 88, in extract_receipt
-    response = get_client().chat(
-        model=MODEL,
-    ...<7 lines>...
-        format='json',
-    )
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 387, in chat
-    return self._request(
-           ~~~~~~~~~~~~~^
-      ChatResponse,
-      ^^^^^^^^^^^^^
-    ...<14 lines>...
-      stream=stream,
-      ^^^^^^^^^^^^^^
-    )
-    ^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 199, in _request
-    return cls(**self._request_raw(*args, **kwargs).json())
-                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 143, in _request_raw
-    raise ResponseError(e.response.text, e.response.status_code) from None
-ollama._types.ResponseError: you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 853ab4ae-02a2-4c6b-8719-1ffb53f64da9) (status code: 429)
-2026-08-14 18:57:38,795 INFO done: tmp__83ovnl.pdf#page3
-2026-08-14 18:57:41,911 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:57:41,912 WARNING attempt 3 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 5b546c35-3eaf-4d80-9eb3-62479458f5f5) (status code: 429)
-2026-08-14 18:57:41,912 ERROR failed: tmp__83ovnl.pdf#page2
-Traceback (most recent call last):
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 149, in process_page
-    return key, extract_receipt_with_retry(image_bytes)
-                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 128, in extract_receipt_with_retry
-    raise last_exc
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 114, in extract_receipt_with_retry
-    return extract_receipt(image)
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 88, in extract_receipt
-    response = get_client().chat(
-        model=MODEL,
-    ...<7 lines>...
-        format='json',
-    )
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 387, in chat
-    return self._request(
-           ~~~~~~~~~~~~~^
-      ChatResponse,
-      ^^^^^^^^^^^^^
-    ...<14 lines>...
-      stream=stream,
-      ^^^^^^^^^^^^^^
-    )
-    ^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 199, in _request
-    return cls(**self._request_raw(*args, **kwargs).json())
-                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 143, in _request_raw
-    raise ResponseError(e.response.text, e.response.status_code) from None
-ollama._types.ResponseError: you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 5b546c35-3eaf-4d80-9eb3-62479458f5f5) (status code: 429)
-2026-08-14 18:57:41,916 INFO done: tmp__83ovnl.pdf#page2
-2026-08-14 18:57:42,409 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 429 Too Many Requests"
-2026-08-14 18:57:42,410 WARNING attempt 3 failed (status 429): you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: e019a0dd-7355-42d7-801c-8f21106ff647) (status code: 429)
-2026-08-14 18:57:42,410 ERROR failed: tmp__83ovnl.pdf#page1
-Traceback (most recent call last):
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 149, in process_page
-    return key, extract_receipt_with_retry(image_bytes)
-                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 128, in extract_receipt_with_retry
-    raise last_exc
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 114, in extract_receipt_with_retry
-    return extract_receipt(image)
-  File "C:\Users\FTSPL1\Desktop\ocr file\ocr-project\model.py", line 88, in extract_receipt
-    response = get_client().chat(
-        model=MODEL,
-    ...<7 lines>...
-        format='json',
-    )
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 387, in chat
-    return self._request(
-           ~~~~~~~~~~~~~^
-      ChatResponse,
-      ^^^^^^^^^^^^^
-    ...<14 lines>...
-      stream=stream,
-      ^^^^^^^^^^^^^^
-    )
-    ^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 199, in _request
-    return cls(**self._request_raw(*args, **kwargs).json())
-                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\FTSPL1\Desktop\ocr project deatils\.venv\Lib\site-packages\ollama\_client.py", line 143, in _request_raw
-    raise ResponseError(e.response.text, e.response.status_code) from None
-ollama._types.ResponseError: you (palanand0) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: e019a0dd-7355-42d7-801c-8f21106ff647) (status code: 429)
-2026-08-14 18:57:42,412 INFO done: tmp__83ovnl.pdf#page1
-2026-08-14 18:59:39,500 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 18:59:39,509 INFO done: tmph_meyhe4.pdf#page1
-2026-08-14 18:59:42,558 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 18:59:42,573 INFO done: tmph_meyhe4.pdf#page2
-2026-08-14 18:59:52,222 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-14 18:59:52,231 INFO done: tmph_meyhe4.pdf#page3
+2026-08-15 16:09:49,205 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 16:09:49,210 INFO done: tmp_707u18r.pdf#page2
+2026-08-15 16:09:57,707 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 16:09:57,715 INFO done: tmp_707u18r.pdf#page1
+2026-08-15 16:22:21,983 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 16:22:21,987 INFO done: tmppwkjee8g.pdf#page2
+2026-08-15 16:22:40,023 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 16:22:40,039 INFO done: tmppwkjee8g.pdf#page1
+2026-08-15 16:28:41,789 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 16:28:41,793 INFO done: tmpcfnafnq0.pdf#page2
+2026-08-15 16:29:06,715 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 16:29:06,725 INFO done: tmpcfnafnq0.pdf#page1
+2026-08-15 16:56:54,003 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 16:56:54,017 INFO done: tmpqb_6vs6b.pdf#page1
+2026-08-15 16:57:11,782 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 16:57:11,799 INFO done: tmpqb_6vs6b.pdf#page2
+2026-08-15 17:02:42,591 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:02:42,599 INFO done: tmpk600lo3m.pdf#page2
+2026-08-15 17:05:22,274 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:05:36,410 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:07:37,865 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:07:52,226 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:08:22,715 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:08:22,719 INFO skipped (blank): tmpmvp7sv1p.pdf#page2
+2026-08-15 17:08:34,720 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:08:34,725 INFO done: tmpmvp7sv1p.pdf#page1
+2026-08-15 17:10:29,202 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:29,207 INFO skipped (blank): tmpjowks5zr.pdf#page9
+2026-08-15 17:10:30,838 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:30,840 INFO skipped (blank): tmpjowks5zr.pdf#page7
+2026-08-15 17:10:30,984 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:30,985 INFO skipped (blank): tmpjowks5zr.pdf#page10
+2026-08-15 17:10:33,923 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:33,929 INFO skipped (blank): tmpjowks5zr.pdf#page6
+2026-08-15 17:10:35,733 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:35,737 INFO skipped (blank): tmpjowks5zr.pdf#page4
+2026-08-15 17:10:39,268 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:39,276 INFO done: tmpjowks5zr.pdf#page8
+2026-08-15 17:10:40,156 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:40,157 INFO done: tmpjowks5zr.pdf#page1
+2026-08-15 17:10:42,676 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:42,681 INFO skipped (blank): tmpjowks5zr.pdf#page5
+2026-08-15 17:10:46,150 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:46,158 INFO skipped (blank): tmpjowks5zr.pdf#page3
+2026-08-15 17:10:46,586 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:10:46,590 INFO skipped (blank): tmpjowks5zr.pdf#page2
+2026-08-15 17:11:34,783 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:11:34,789 INFO skipped (blank): tmpy_p0topl.pdf#page7
+2026-08-15 17:11:38,095 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:11:38,098 INFO skipped (blank): tmpy_p0topl.pdf#page6
+2026-08-15 17:11:40,294 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:11:40,297 INFO skipped (blank): tmpy_p0topl.pdf#page4
+2026-08-15 17:11:40,800 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:11:40,806 INFO done: tmpy_p0topl.pdf#page8
+2026-08-15 17:11:41,393 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:11:41,395 INFO skipped (blank): tmpy_p0topl.pdf#page2
+2026-08-15 17:11:45,736 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:11:45,743 INFO done: tmpy_p0topl.pdf#page1
+2026-08-15 17:11:48,538 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:11:48,551 INFO skipped (blank): tmpy_p0topl.pdf#page3
+2026-08-15 17:11:48,973 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:11:48,974 INFO skipped (blank): tmpy_p0topl.pdf#page10
+2026-08-15 17:11:58,958 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:11:58,965 INFO skipped (blank): tmpy_p0topl.pdf#page5
+2026-08-15 17:12:07,306 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:12:07,310 INFO skipped (blank): tmpy_p0topl.pdf#page9
+2026-08-15 17:15:07,622 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:15:07,627 INFO skipped (blank): tmpilu94t27.pdf#page5
+2026-08-15 17:15:11,312 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:15:11,315 INFO skipped (blank): tmpilu94t27.pdf#page3
+2026-08-15 17:15:11,495 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:15:11,498 INFO skipped (blank): tmpilu94t27.pdf#page4
+2026-08-15 17:15:42,548 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:15:42,559 INFO done: tmpilu94t27.pdf#page1
+2026-08-15 17:17:17,860 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:17:17,945 INFO done: tmpilu94t27.pdf#page2
+2026-08-15 17:23:29,592 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:23:29,598 INFO done: tmpg8kytp6g.pdf#page1
+2026-08-15 17:23:38,912 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:23:38,924 INFO done: tmpg8kytp6g.pdf#page2
+2026-08-15 17:23:46,039 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:23:46,062 WARNING attempt 1 failed: JSONDecodeError: Extra data: line 540 column 4 (char 14305)
+2026-08-15 17:24:04,813 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:24:04,819 INFO skipped (blank): tmpg8kytp6g.pdf#page3
+2026-08-15 17:34:18,449 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:34:18,461 INFO done: tmp31dau3g6.pdf#page2
+2026-08-15 17:34:38,269 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:34:38,285 WARNING attempt 1 failed: JSONDecodeError: Extra data: line 556 column 4 (char 14358)
+2026-08-15 17:34:58,788 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:34:58,830 INFO done: tmp31dau3g6.pdf#page1
+2026-08-15 17:35:03,221 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:35:03,225 INFO skipped (blank): tmp31dau3g6.pdf#page3
+2026-08-15 17:46:23,807 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:46:23,815 INFO done: tmpype2ylz_.pdf#page2
+2026-08-15 17:46:26,267 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:46:26,277 INFO done: tmpype2ylz_.pdf#page1
+2026-08-15 17:49:10,664 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-15 17:49:10,981 INFO done: tmpype2ylz_.pdf#page3

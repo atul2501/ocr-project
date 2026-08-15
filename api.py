@@ -14,13 +14,19 @@ PDF_ZOOM = 5  # render scale; higher = sharper but slower/bigger
 OUTPUT_PATH = 'out.json'
 LOG_PATH = 'process.log'
 SHARPENED_DIR = 'output'
+SHARPENED_MAX_AGE_SECONDS = 60 * 60  # sharpened debug page PDFs in SHARPENED_DIR older than this get auto-deleted
 
 # Fill in as many keys as you have - 1 is fine, so is 8. Requests rotate
 # across whichever ones are non-empty here. An OLLAMA_API_KEY_<n> environment
 # variable, if set, overrides the entry at that position (1-indexed).
 API_KEYS = [
-    'b328da5952a84796824791c58f883525.1aDsPaCS6j0Ohp4mMWP5gvjK',
-]
+            'dd633d6cc5754397a5fe335fce8e7e8a.xV0UoGbMFC2xP332Y-Q2rlme',
+            '84a4197f524a430188e998fd9255f41b.6Dwy42j1n653P0OlOoPQovmK',
+            '0e79c0347e2945428054bb16a743db0f.exH-Kxg7zCG7PUrlO7-KxpFi',
+            '59d963bc579f4d9b8020c739dadbf798.sLp5W442w8ctn4KptTzcT5TU',
+            '05bdcd9506cf413995102efc4c27a2ca.1b8-iPCwnBg1lJmccND9w0YZ',
+            'a96c2d79ded643caa217bbc0c185796d.-R6IC1WvWzARUphYcpMZ5mUJ',
+            ]
 
 MAX_WORKERS = 10  # concurrent Ollama requests, shared by every caller in this process (CLI batch run + all API requests) so load never exceeds this regardless of how many PDFs come in at once; extra pages simply wait in the executor's internal queue
 MAX_RETRIES = 2  # retries after the first attempt (3 attempts total per page)

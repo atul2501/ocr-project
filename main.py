@@ -7,7 +7,9 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from model import (
     INVOICE_DIR,
     OUTPUT_PATH,
+    cleanup_old_output,
     executor,
+    group_into_invoices,
     is_blank_result,
     logger,
     pdf_to_images,
@@ -56,12 +58,18 @@ async def _process_pdf(pdf_bytes: bytes):
             if is_blank_result(result):
                 logger.info(f"skipped (blank): {key}")
                 continue
+            if "error" in result:
+                logger.info(f"skipped (failed): {key}")
+                continue
             results.append(result)
             logger.info(f"done: {key}")
     finally:
         os.remove(tmp_path)
 
-    return results
+    invoices = group_into_invoices(results)
+    output = [invoice.to_dict() for invoice in invoices]
+    cleanup_old_output()
+    return output
 
 
 
