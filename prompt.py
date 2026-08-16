@@ -46,6 +46,14 @@ IMPORTANT EXTRACTION RULES:
 - Extract every individual invoice line item and every additional charge.
   If there are multiple line items, include one entry per item in the
   "ITEMS" array - do not collapse multiple items into a single entry.
+- Some transporter/logistics bills list several separate trips as rows in
+  one table (e.g. a fleet-owner's bill with one row per vehicle, each row
+  showing its own LR No., Vehicle No., date and Amount for a single trip).
+  Treat each such row as its own entry in "ITEMS", and fill that row's own
+  "LR_NUMBER" and "VEHICLE_NUMBER" from that row specifically - do not
+  leave them blank because a vehicle/LR number for a different row already
+  exists elsewhere on the page, and do not merge these rows into one entry
+  just because they share the same From/To/product description.
 - "ITEMS" is only for the actual goods or service being billed - e.g. the
   product rows on a sales invoice, or the freight/transportation charge
   itself on a GTA/transporter bill (that charge is the primary billed
@@ -290,6 +298,7 @@ the page, wrapped in an array as described above:
       "ITEM_CODE": "",
       "MATERIAL_CODE": "",
       "LR_NUMBER": "",
+      "VEHICLE_NUMBER": "",
       "PRODUCT_NAME": "",
       "DESCRIPTION": "",
       "HSN_CODE": "",

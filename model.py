@@ -286,6 +286,7 @@ class InvoiceItem:
     UOM: str = ""
     UNIT_PRICE: float = 0.0
     AMOUNT: float = 0.0
+    VEHICLE_NUMBER: str = ""
 
     @classmethod
     def from_dict(cls, item: dict) -> "InvoiceItem":
@@ -296,6 +297,7 @@ class InvoiceItem:
             UOM=item.get("UOM", ""),
             UNIT_PRICE=_to_float(item.get("UNIT_PRICE", "")),
             AMOUNT=_to_float(item.get("LINE_TOTAL", "")),
+            VEHICLE_NUMBER=item.get("VEHICLE_NUMBER", ""),
         )
 
 
@@ -472,12 +474,16 @@ def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
     showing the identical line items. DESCRIPTION is the field most likely
     to come back slightly different between two OCR passes of the same
     text (a misread digit, extra whitespace), so fingerprint each item by
-    its numeric/code fields only (HSN, QTY, UNIT_PRICE, AMOUNT) and skip an
-    incoming item whose fingerprint repeats one already recorded for that
-    invoice number - those fields are printed numbers/codes, not free text,
-    and are far more likely to OCR identically across two scans of the same
-    line. A genuinely distinct item with a coincidentally identical
-    HSN/qty/price/amount combination is rare enough to accept the risk,
+    its numeric/code fields only (HSN, QTY, UNIT_PRICE, AMOUNT,
+    VEHICLE_NUMBER) and skip an incoming item whose fingerprint repeats one
+    already recorded for that invoice number - those fields are printed
+    numbers/codes, not free text, and are far more likely to OCR
+    identically across two scans of the same line. VEHICLE_NUMBER also
+    guards the fleet-owner bill case where several rows share identical
+    blank HSN/QTY/UNIT_PRICE and only differ by vehicle and amount. A
+    genuinely distinct item with a coincidentally identical
+    HSN/qty/price/amount/vehicle combination is rare enough to accept the
+    risk,
     same tradeoff already made for the LOGISTICS/ADDITIONAL_CHARGES
     dedup above.
 
@@ -532,14 +538,14 @@ def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
             seen = seen_items_by_number[key]
             incoming_fingerprints = set()
             for item in invoice.ITEM_LIST:
-                fingerprint = (item.HSN, item.QTY, item.UNIT_PRICE, item.AMOUNT)
+                fingerprint = (item.HSN, item.QTY, item.UNIT_PRICE, item.AMOUNT, item.VEHICLE_NUMBER)
                 if fingerprint not in seen:
                     existing.ITEM_LIST.append(item)
                     incoming_fingerprints.add(fingerprint)
             seen.update(incoming_fingerprints)
         else:
             seen_items_by_number[key] = {
-                (item.HSN, item.QTY, item.UNIT_PRICE, item.AMOUNT) for item in invoice.ITEM_LIST
+                (item.HSN, item.QTY, item.UNIT_PRICE, item.AMOUNT, item.VEHICLE_NUMBER) for item in invoice.ITEM_LIST
             }
             invoices_by_number[key] = invoice
             order.append(key)
