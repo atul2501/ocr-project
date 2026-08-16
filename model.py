@@ -402,7 +402,11 @@ class Invoice:
             IRN_NO=gst_compliance.get("IRN", ""),
             IRN_DATE=gst_compliance.get("ACKNOWLEDGEMENT_DATE", ""),
             INVOICE_NUMBER=document.get("INVOICE_NUMBER", ""),
-            ORDER_NUMBER=_first_value(purchase_order.get("PO_NUMBER"), purchase_order.get("PURCHASE_ORDER_REFERENCE")),
+            ORDER_NUMBER=_first_value(
+                purchase_order.get("PO_NUMBER"),
+                purchase_order.get("PURCHASE_ORDER_REFERENCE"),
+                document.get("INVOICE_REFERENCE_NUMBER"),
+            ),
             VENDOR_NAME=_first_value(supplier.get("NAME"), supplier.get("LEGAL_NAME"), supplier.get("TRADE_NAME")),
             VENDOR_GST_NO=supplier.get("GSTIN", ""),
             CUSTOMER_NAME=_first_value(customer.get("NAME"), customer.get("LEGAL_NAME")),

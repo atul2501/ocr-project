@@ -30,6 +30,19 @@ IMPORTANT EXTRACTION RULES:
 - Do not calculate missing tax, totals or amounts.
 - Do not confuse invoice number with PO number, LR number, delivery order,
   challan number, sales order or other reference numbers.
+- "PURCHASE_ORDER.PO_NUMBER" is the customer's own order/purchase
+  reference that the vendor is billing against - fill it whenever the
+  invoice header cites one, regardless of the exact label used ("PO No.",
+  "Order Ref", "Ref. No.", "Customer Ref", "Your Order No.", "P.O. No."),
+  not only when the words "Purchase Order" are literally printed. These
+  numbers are very often in the buyer's own ERP format (e.g. a 10-digit
+  SAP PO number like "4300021506", sometimes followed by a revision and
+  date such as "/ R-01 DT.06-08-2025" - keep that suffix as part of the
+  value exactly as printed). If the invoice cites two distinct such
+  numbers under two different labels (e.g. both an "Order Ref" and a
+  separate "Customer Ref"), put the customer's own PO-style reference
+  (the one in the buyer's ERP number format) in "PO_NUMBER" and the other
+  one in "PURCHASE_ORDER_REFERENCE".
 - INVOICE_NUMBER is specifically the number the vendor's own Tax Invoice
   labels as its invoice/bill number (e.g. "Invoice No.", "Tax Invoice No.",
   "Bill No." printed on the vendor's letterhead invoice itself) - never a
