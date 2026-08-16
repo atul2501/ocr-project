@@ -216,6 +216,24 @@ _NAMED_CHARGE_FIELDS = [
 ]
 
 
+_PAN_PATTERN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
+
+
+def _pan_from_gstin(gstin: str) -> str:
+    """Derive the 10-character PAN embedded in a GSTIN's characters 3-12 -
+    this is a mechanical substring of a value already fully printed on the
+    page (GSTIN = 2-digit state code + PAN + 1-digit entity code + "Z" + 1
+    checksum char), not a guess, so it's safe to fill in even on invoices
+    that print the GSTIN but never print the PAN by itself. Relying on this
+    instead of whatever the model happened to extract for PAN also avoids
+    the inconsistency of the model deriving it on some pages but not others."""
+    gstin = (gstin or "").strip().upper()
+    if len(gstin) != 15 or gstin[13] != "Z":
+        return ""
+    candidate = gstin[2:12]
+    return candidate if _PAN_PATTERN.match(candidate) else ""
+
+
 def _to_float(value) -> float:
     """Parse an extracted amount/quantity string into a real number for
     SAP - "", None or anything unparseable becomes 0 (SAP's DEC/NUMC fields
@@ -397,8 +415,11 @@ class Invoice:
             GROSS_TOTAL=_to_float(amounts.get("TOTAL_AMOUNT", "")),
             INVOICE_DATE=document.get("INVOICE_DATE", ""),
             ORDER_DATE=purchase_order.get("PO_DATE", ""),
-            VENDOR_PAN_NO=supplier.get("PAN", ""),
-            CUSTOMER_PAN_NO=customer.get("PAN", ""),
+            VENDOR_PAN_NO=_first_value(supplier.get("PAN"), _pan_from_gstin(supplier.get("GSTIN", ""))),
+            CUSTOMER_PAN_NO=_first_value(
+                customer.get("PAN"),
+                _pan_from_gstin(_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN"))),
+            ),
             WEIGHMENT_CHARGES=named_charges["WEIGHMENT_CHARGES"],
             PARKING_CHARGES=named_charges["PARKING_CHARGES"],
             LOADING_CHARGES=named_charges["LOADING_CHARGES"],

@@ -43,6 +43,16 @@ IMPORTANT EXTRACTION RULES:
   invoice, not a new one - leave INVOICE_NUMBER "" on that page rather than
   filling it with the internal reference number.
 - Distinguish Supplier/Vendor, Customer/Buyer, Bill-To and Ship-To.
+- "PLACE_OF_SUPPLY" is a specific statutory GST field - fill it only from
+  text actually labelled "Place of Supply" (or an e-invoice's IRN/QR
+  compliance block that states it). Never fill it from a route/destination
+  field such as "To", "To Area", "Ship To", "Delivery Location" or the
+  destination named in a freight description, even though those may
+  coincidentally name a place - a transporter's "To Area: Khopoli" is where
+  the goods are going, not a Place-of-Supply declaration. Do not infer it
+  from an address block's city/state either. If the page never actually
+  labels a value as Place of Supply, leave "PLACE_OF_SUPPLY" "" rather than
+  substituting a nearby location.
 - Extract every individual invoice line item and every additional charge.
   If there are multiple line items, include one entry per item in the
   "ITEMS" array - do not collapse multiple items into a single entry.
@@ -98,7 +108,11 @@ IMPORTANT EXTRACTION RULES:
   the amount. Put it in that item's "WEIGHT" field instead. If the table
   has no column actually labelled Qty/Quantity/Nos/Units for that row,
   leave QUANTITY "" rather than substituting weight, count of vehicles, or
-  any other nearby number.
+  any other nearby number. Fill "WEIGHT_UNIT" with the unit exactly as
+  printed near that weight value or in the column header (e.g. "Metric
+  Tons", "MT", "Kg", "Tons") - never abbreviate or substitute a unit letter
+  that isn't itself printed on the page (do not write "T" for a value
+  labelled "Metric Tons" unless "T" is what's actually printed).
 - Extract GST components separately: CGST, SGST, IGST, UTGST and Cess.
 - Extract HSN/SAC codes whenever visible.
 - Extract Indian GSTIN, PAN, CIN and other statutory identifiers when visible.
