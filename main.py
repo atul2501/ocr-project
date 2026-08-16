@@ -10,6 +10,7 @@ from model import (
     cleanup_old_output,
     executor,
     group_into_invoices,
+    is_blank_invoice,
     is_blank_result,
     logger,
     pdf_to_images,
@@ -52,21 +53,23 @@ async def _process_pdf(pdf_bytes: bytes):
             for page_num, image_bytes in pages
         ]
 
+        source_id = os.path.basename(tmp_path)
         results = []
         for future in asyncio.as_completed(futures):
             key, result = await future
-            if is_blank_result(result):
-                logger.info(f"skipped (blank): {key}")
-                continue
-            if "error" in result:
+            if isinstance(result, dict):  # process_page's {"error": ...} sentinel
                 logger.info(f"skipped (failed): {key}")
                 continue
-            results.append(result)
-            logger.info(f"done: {key}")
+            kept = [invoice for invoice in result if not is_blank_result(invoice)]
+            if not kept:
+                logger.info(f"skipped (blank): {key}")
+                continue
+            results.extend((source_id, invoice) for invoice in kept)
+            logger.info(f"done: {key} ({len(kept)} invoice(s))")
     finally:
         os.remove(tmp_path)
 
-    invoices = group_into_invoices(results)
+    invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
     output = [invoice.to_dict() for invoice in invoices]
     cleanup_old_output()
     return output

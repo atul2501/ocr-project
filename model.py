@@ -7,7 +7,7 @@ import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from prompt import PROMPTS
 import httpx
 import pymupdf
@@ -102,7 +102,12 @@ def cleanup_old_output() -> None:
             logger.exception(f"failed to clean up {path}")
 
 
-def extract_receipt(image) -> dict:
+def extract_receipt(image) -> list[dict]:
+    """Returns one raw extraction dict per invoice found on this page image -
+    almost always a single-element list, but a page can genuinely show more
+    than one separate invoice (e.g. two small bills photographed together),
+    and the prompt asks the model to return one array entry per invoice in
+    that case. Every entry is kept - none may be silently dropped."""
     response = get_client().chat(
         model=MODEL,
         messages=[
@@ -119,22 +124,22 @@ def extract_receipt(image) -> dict:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
-        match = re.search(r'\{.*\}', text, re.DOTALL)
+        match = re.search(r'\[.*\]|\{.*\}', text, re.DOTALL)
         if not match:
             raise ValueError(f"Model did not return valid JSON:\n{text}")
         parsed = json.loads(match.group(0))
 
-    # The model sometimes wraps the single page object in a list (echoing
-    # the prompt's "[{...}, ...]" example literally) instead of returning
-    # it bare - normalize to a plain dict either way.
-    if isinstance(parsed, list):
-        if not parsed or not isinstance(parsed[0], dict):
-            raise ValueError(f"Model returned an unexpected JSON shape:\n{text}")
-        parsed = parsed[0]
+    # The model is asked for an array (one object per invoice on the page)
+    # but occasionally still returns a single bare object - normalize to a
+    # list either way, without ever discarding extra array entries.
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list) or not parsed or not all(isinstance(p, dict) for p in parsed):
+        raise ValueError(f"Model returned an unexpected JSON shape:\n{text}")
     return parsed
 
 
-def extract_receipt_with_retry(image: bytes) -> dict:
+def extract_receipt_with_retry(image: bytes) -> list[dict]:
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 2):
         try:
@@ -155,6 +160,18 @@ def extract_receipt_with_retry(image: bytes) -> dict:
     raise last_exc
 
 
+def _is_blank_value(value) -> bool:
+    if isinstance(value, dict):
+        return all(_is_blank_value(v) for v in value.values())
+    if isinstance(value, list):
+        return all(_is_blank_value(v) for v in value)
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (int, float)):
+        return value == 0
+    return value is None
+
+
 def is_blank_result(result: dict) -> bool:
     """True if extraction found nothing usable - e.g. the page isn't a Tax
     Invoice/PO (blank page, cover sheet, etc.) or the model echoed the empty
@@ -163,15 +180,7 @@ def is_blank_result(result: dict) -> bool:
     if is_target and is_target != "true":
         return True  # model explicitly marked this page as not a target document
 
-    def _blank(value):
-        if isinstance(value, dict):
-            return all(_blank(v) for v in value.values())
-        if isinstance(value, list):
-            return all(_blank(v) for v in value)
-        if isinstance(value, str):
-            return not value.strip()
-        return value is None
-    return _blank(result)
+    return _is_blank_value(result)
 
 
 def _first_value(*values):
@@ -185,20 +194,26 @@ def _first_value(*values):
     return ""
 
 
-# LOGISTICS charge fields the model can fill in with a named amount (e.g.
-# "WEIGHMENT CHARGES : 200.00" printed on a transporter invoice) that isn't
-# a proper line item in ITEMS or ADDITIONAL_CHARGES - each becomes its own
-# ITEM_LIST entry. FREIGHT_AMOUNT is excluded: freight is already carried
-# as the primary row in ITEMS, so including it here would double it up.
-LOGISTICS_CHARGE_LABELS = {
-    "WEIGHMENT_CHARGES": "Weighment Charges",
-    "PARKING_CHARGES": "Parking Charges",
-    "LOADING_CHARGES": "Loading Charges",
-    "UNLOADING_CHARGES": "Unloading Charges",
-    "EMPTY_UNLOADING_CHARGES": "Empty Unloading Charges",
-    "DETENTION_CHARGES": "Detention Charges",
-    "DEMURRAGE_CHARGES": "Demurrage Charges",
-}
+# Named logistics/freight-related charges that each get their own header
+# field on Invoice (WEIGHMENT_CHARGES, PARKING_CHARGES, ...) rather than
+# being folded into ITEM_LIST. Order matters when matching an
+# ADDITIONAL_CHARGES description below: most specific phrase first, since
+# "LOADING" is itself a substring of "UNLOADING", which is itself a
+# substring of "EMPTY UNLOADING" - checking in this order (and stopping at
+# the first match per charge) means a genuine "EMPTY UNLOADING" charge can
+# never be misclassified as a plain "LOADING" one. FREIGHT_AMOUNT has no
+# field here: freight is the primary billed service on a GTA bill, so it's
+# already carried in ITEMS/ITEM_LIST, and including it here too would
+# double it up.
+_NAMED_CHARGE_FIELDS = [
+    ("EMPTY_UNLOADING_CHARGES", ("EMPTY UNLOADING", "EMPTY UNLOAD")),
+    ("UNLOADING_CHARGES", ("UNLOADING",)),
+    ("LOADING_CHARGES", ("LOADING",)),
+    ("DETENTION_CHARGES", ("DETENTION",)),
+    ("DEMURRAGE_CHARGES", ("DEMURRAGE",)),
+    ("PARKING_CHARGES", ("PARKING",)),
+    ("WEIGHMENT_CHARGES", ("WEIGHMENT", "WEIGHTMENT", "WEIGHBRIDGE")),
+]
 
 
 def _to_float(value) -> float:
@@ -218,6 +233,49 @@ def _to_float(value) -> float:
         return 0.0
 
 
+def _build_named_charges(data: dict) -> dict[str, float]:
+    """Map each of the fixed named logistics/freight charge types (see
+    _NAMED_CHARGE_FIELDS) to its amount, for Invoice's WEIGHMENT_CHARGES/
+    PARKING_CHARGES/... header fields. Prefers an explicit LOGISTICS.<field>
+    value (unambiguous), falling back to scanning ADDITIONAL_CHARGES by
+    description keyword - the model sometimes reports the same charge as a
+    described ADDITIONAL_CHARGES row instead of filling the matching
+    LOGISTICS field. Each ADDITIONAL_CHARGES entry is classified into at
+    most one of these fields (first match wins, in _NAMED_CHARGE_FIELDS
+    order), so one charge can't double-count into two fields that way."""
+    logistics = data.get("LOGISTICS", {})
+    charges = {name: _to_float(logistics.get(name, "")) for name, _ in _NAMED_CHARGE_FIELDS}
+
+    for charge in data.get("ADDITIONAL_CHARGES", []):
+        description = (charge.get("DESCRIPTION", "") or charge.get("CHARGE_TYPE", "")).upper()
+        for name, keywords in _NAMED_CHARGE_FIELDS:
+            if charges[name]:
+                continue  # already have a value for this field from LOGISTICS
+            if any(keyword in description for keyword in keywords):
+                charges[name] = _to_float(_first_value(charge.get("AMOUNT"), charge.get("TOTAL_AMOUNT")))
+                break
+
+    # LOGISTICS itself can carry the same duplication risk the classifier
+    # above guards against: EMPTY_UNLOADING_CHARGES, UNLOADING_CHARGES and
+    # LOADING_CHARGES are separate raw keys, so the model can (and does)
+    # fill more than one of them with the same amount for what is really a
+    # single printed "EMPTY UNLOADING CHARGES" line - the substring overlap
+    # between these three names ("LOADING" sits inside "UNLOADING" sits
+    # inside "EMPTY UNLOADING") makes them the specific fields prone to this,
+    # not a generic risk across all seven. If two of them carry the exact
+    # same non-zero amount, keep only the most specific one (this list's
+    # order) and zero the rest, rather than trusting a coincidence.
+    loading_family = ["EMPTY_UNLOADING_CHARGES", "UNLOADING_CHARGES", "LOADING_CHARGES"]
+    for i, name in enumerate(loading_family):
+        if not charges[name]:
+            continue
+        for other in loading_family[i + 1:]:
+            if charges[other] == charges[name]:
+                charges[other] = 0.0
+
+    return charges
+
+
 @dataclass
 class InvoiceItem:
     """One SAP-mapped line item, built from an entry in the extracted
@@ -225,6 +283,7 @@ class InvoiceItem:
     DESCRIPTION: str = ""
     HSN: str = ""
     QTY: float = 0.0
+    UOM: str = ""
     UNIT_PRICE: float = 0.0
     AMOUNT: float = 0.0
 
@@ -234,19 +293,9 @@ class InvoiceItem:
             DESCRIPTION=item.get("DESCRIPTION", ""),
             HSN=item.get("HSN_CODE", ""),
             QTY=_to_float(item.get("QUANTITY", "")),
+            UOM=item.get("UOM", ""),
             UNIT_PRICE=_to_float(item.get("UNIT_PRICE", "")),
             AMOUNT=_to_float(item.get("LINE_TOTAL", "")),
-        )
-
-    @classmethod
-    def from_charge(cls, charge: dict) -> "InvoiceItem":
-        """An entry from the "ADDITIONAL_CHARGES" array - same idea as a
-        line item but keyed AMOUNT/TOTAL_AMOUNT instead of LINE_TOTAL."""
-        return cls(
-            DESCRIPTION=charge.get("DESCRIPTION", "") or charge.get("CHARGE_TYPE", ""),
-            QTY=_to_float(charge.get("QUANTITY", "")),
-            UNIT_PRICE=_to_float(charge.get("RATE", "")),
-            AMOUNT=_to_float(_first_value(charge.get("AMOUNT"), charge.get("TOTAL_AMOUNT"))),
         )
 
 
@@ -258,7 +307,9 @@ class Invoice:
     IRN_DATE: str = ""
     INVOICE_NUMBER: str = ""
     ORDER_NUMBER: str = ""
+    VENDOR_NAME: str = ""
     VENDOR_GST_NO: str = ""
+    CUSTOMER_NAME: str = ""
     CUSTOMER_GST_NO: str = ""
     PLACE_OF_SUPPLY: str = ""
     BASE_VALUE: float = 0.0
@@ -270,6 +321,14 @@ class Invoice:
     ORDER_DATE: str = ""
     VENDOR_PAN_NO: str = ""
     CUSTOMER_PAN_NO: str = ""
+    WEIGHMENT_CHARGES: float = 0.0
+    PARKING_CHARGES: float = 0.0
+    LOADING_CHARGES: float = 0.0
+    UNLOADING_CHARGES: float = 0.0
+    EMPTY_UNLOADING_CHARGES: float = 0.0
+    DETENTION_CHARGES: float = 0.0
+    DEMURRAGE_CHARGES: float = 0.0
+    VEHICLE_NUMBER: str = ""
     ITEM_LIST: list[InvoiceItem] = field(default_factory=list)
 
     @classmethod
@@ -281,8 +340,11 @@ class Invoice:
         tax = data.get("TAX", {})
         amounts = data.get("AMOUNTS", {})
         gst_compliance = data.get("GST_COMPLIANCE", {})
+        logistics = data.get("LOGISTICS", {})
+        delivery = data.get("DELIVERY", {})
 
         item_list = cls._build_item_list(data)
+        named_charges = _build_named_charges(data)
         gross_total = _to_float(amounts.get("TOTAL_AMOUNT", ""))
         total_tax = (
             _to_float(tax.get("IGST_AMOUNT", ""))
@@ -317,7 +379,9 @@ class Invoice:
             IRN_DATE=gst_compliance.get("ACKNOWLEDGEMENT_DATE", ""),
             INVOICE_NUMBER=document.get("INVOICE_NUMBER", ""),
             ORDER_NUMBER=purchase_order.get("PO_NUMBER", ""),
+            VENDOR_NAME=_first_value(supplier.get("NAME"), supplier.get("LEGAL_NAME"), supplier.get("TRADE_NAME")),
             VENDOR_GST_NO=supplier.get("GSTIN", ""),
+            CUSTOMER_NAME=_first_value(customer.get("NAME"), customer.get("LEGAL_NAME")),
             CUSTOMER_GST_NO=_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN")),
             PLACE_OF_SUPPLY=_first_value(document.get("PLACE_OF_SUPPLY"), gst_compliance.get("PLACE_OF_SUPPLY")),
             BASE_VALUE=base_value,
@@ -329,41 +393,33 @@ class Invoice:
             ORDER_DATE=purchase_order.get("PO_DATE", ""),
             VENDOR_PAN_NO=supplier.get("PAN", ""),
             CUSTOMER_PAN_NO=customer.get("PAN", ""),
+            WEIGHMENT_CHARGES=named_charges["WEIGHMENT_CHARGES"],
+            PARKING_CHARGES=named_charges["PARKING_CHARGES"],
+            LOADING_CHARGES=named_charges["LOADING_CHARGES"],
+            UNLOADING_CHARGES=named_charges["UNLOADING_CHARGES"],
+            EMPTY_UNLOADING_CHARGES=named_charges["EMPTY_UNLOADING_CHARGES"],
+            DETENTION_CHARGES=named_charges["DETENTION_CHARGES"],
+            DEMURRAGE_CHARGES=named_charges["DEMURRAGE_CHARGES"],
+            VEHICLE_NUMBER=_first_value(logistics.get("VEHICLE_NUMBER"), delivery.get("VEHICLE_NUMBER")),
             ITEM_LIST=item_list,
         )
 
     @staticmethod
     def _build_item_list(data: dict) -> list["InvoiceItem"]:
-        """Combine the proper "ITEMS" line items with any entries in
-        "ADDITIONAL_CHARGES" and any named LOGISTICS charge amounts
-        (weighment, parking, detention, ...) into one flat list - all three
-        sections can carry billable lines depending on how the source
-        invoice is laid out.
-
-        The model frequently echoes the same charge into both
-        ADDITIONAL_CHARGES and its matching LOGISTICS field (e.g. a
-        "WEIGHTMENT CHARGES: 200.00" line shows up as both an
-        ADDITIONAL_CHARGES entry and LOGISTICS.WEIGHMENT_CHARGES). Track
-        amounts already added from ADDITIONAL_CHARGES and skip a LOGISTICS
-        charge that repeats one, so it isn't double-counted."""
+        """ITEM_LIST is built only from the "ITEMS" array - the actual
+        goods/service lines being billed (e.g. the freight/transportation
+        charge itself on a GTA bill). Named add-on charges belong in the
+        WEIGHMENT_CHARGES/PARKING_CHARGES/... header fields instead (see
+        _build_named_charges) - the prompt asks the model to route these
+        into ADDITIONAL_CHARGES specifically so they never land in ITEMS to
+        begin with."""
         items = [InvoiceItem.from_dict(item) for item in data.get("ITEMS", [])]
-
-        additional_charges = [
-            InvoiceItem.from_charge(charge)
-            for charge in data.get("ADDITIONAL_CHARGES", [])
-            if _to_float(_first_value(charge.get("AMOUNT"), charge.get("TOTAL_AMOUNT")))
-        ]
-        items.extend(additional_charges)
-        seen_charge_amounts = {round(item.AMOUNT, 2) for item in additional_charges}
-
-        logistics = data.get("LOGISTICS", {})
-        for key, label in LOGISTICS_CHARGE_LABELS.items():
-            amount = _to_float(logistics.get(key))
-            if amount and round(amount, 2) not in seen_charge_amounts:
-                items.append(InvoiceItem(DESCRIPTION=label, AMOUNT=amount))
-                seen_charge_amounts.add(round(amount, 2))
-
-        return items
+        # The model occasionally echoes the schema's example ITEMS entry
+        # (an all-blank template row, shown to illustrate the shape) as a
+        # literal extra item alongside the real ones it found - drop any
+        # item that carries no actual data, regardless of why it showed up,
+        # rather than relying on a prompt instruction alone to prevent it.
+        return [item for item in items if not _is_blank_value(asdict(item))]
 
     def to_dict(self) -> dict:
         """Every field is always present - SAP expects a fixed set of keys
@@ -375,11 +431,40 @@ class Invoice:
         return json.dumps(self.to_dict(), ensure_ascii=False, **kwargs)
 
 
-def group_into_invoices(page_results: list[dict]) -> list[Invoice]:
-    """Turn a flat list of per-page extraction dicts into one Invoice per
-    distinct INVOICE_NUMBER - pages that share an invoice number (e.g. a
+def is_blank_invoice(invoice: Invoice) -> bool:
+    """True if none of the SAP-mapped fields carry a real value - the
+    is_blank_result() check runs on the raw ~150-field extraction schema and
+    can miss a page where the model fills in some unrelated field (e.g.
+    METADATA.LANGUAGE, a DELIVERY date) while every field Invoice.from_dict()
+    actually reads stays empty, producing a blank-but-not-flagged row here."""
+    return _is_blank_value(invoice.to_dict())
+
+
+def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
+    """Turn a flat list of (source_id, extracted_dict) pairs into one Invoice
+    per distinct INVOICE_NUMBER - pages that share an invoice number (e.g. a
     multi-page invoice) are merged into a single Invoice with combined
-    ITEM_LIST; distinct invoice numbers each get their own Invoice.
+    ITEM_LIST; distinct invoice numbers each get their own Invoice. A single
+    page can contribute more than one entry here (extract_receipt() returns
+    one dict per invoice it finds on that page), which this function doesn't
+    need to treat specially - each entry is just another item in the list.
+
+    source_id identifies the originating PDF (e.g. its basename) and exists
+    to resolve pages that never print their own invoice number - such as a
+    tooling/annexure page appended after the main Tax Invoice page, which
+    would otherwise become its own orphaned "__unknown_i" Invoice missing
+    every header field (customer GSTIN, dates, PO number, ...). Any page
+    with a blank INVOICE_NUMBER is folded into whichever invoice number was
+    found elsewhere in the same source_id, resolved up front in a first
+    pass so this works regardless of the order pages complete in (page
+    processing runs concurrently, so a blank-numbered page can finish
+    before the page carrying the real invoice number). Caveat: if a single
+    source_id genuinely contains two or more distinct real invoices (not
+    just one invoice plus its own blank-numbered annexure), a blank-numbered
+    page from that source could be folded into the wrong one of them, since
+    this fallback has no way to tell which invoice an unlabeled page belongs
+    to beyond "first one found for this source" - a rare case, and no worse
+    than leaving it an unmerged orphan.
 
     Some documents get scanned/photographed as more than one page for the
     same invoice number - e.g. both the government e-Invoice/IRP printout
@@ -394,31 +479,134 @@ def group_into_invoices(page_results: list[dict]) -> list[Invoice]:
     line. A genuinely distinct item with a coincidentally identical
     HSN/qty/price/amount combination is rare enough to accept the risk,
     same tradeoff already made for the LOGISTICS/ADDITIONAL_CHARGES
-    dedup above."""
+    dedup above.
+
+    The named charge fields (WEIGHMENT_CHARGES, PARKING_CHARGES, ...) are
+    plain scalars, like IGST/CGST/SGST, so they need no special merge
+    handling here - the generic backfill loop below already fills any of
+    them still blank (0.0) on `existing` from a later page that has a value.
+
+    A final pass then folds together any two invoices that share a
+    source_id and have byte-identical BASE_VALUE and GROSS_TOTAL - see
+    _merge_duplicate_totals() for why this is a reliable signal that the
+    prompt-level "don't confuse invoice number with an internal reference
+    number" instruction didn't catch (e.g. a vendor's real Tax Invoice
+    Number on one page vs. a Billing No./voucher number describing the same
+    sale on a companion accounting page)."""
+    invoice_number_by_source: dict[str, str] = {}
+    for source_id, page in page_results:
+        number = page.get("DOCUMENT", {}).get("INVOICE_NUMBER", "")
+        if number and source_id not in invoice_number_by_source:
+            invoice_number_by_source[source_id] = number
+
     invoices_by_number: dict[str, Invoice] = {}
     seen_items_by_number: dict[str, set] = {}
+    source_ids_by_number: dict[str, set[str]] = {}
     order: list[str] = []
-    for i, page in enumerate(page_results):
+    for i, (source_id, page) in enumerate(page_results):
         invoice = Invoice.from_dict(page)
-        key = invoice.INVOICE_NUMBER or f"__unknown_{i}"
+        key = invoice.INVOICE_NUMBER or invoice_number_by_source.get(source_id) or f"__unknown_{i}"
+        source_ids_by_number.setdefault(key, set()).add(source_id)
         if key in invoices_by_number:
             existing = invoices_by_number[key]
+            # Pages for the same invoice can finish in any order (page
+            # processing runs concurrently), so whichever page happened to
+            # be seen first may be the one with blank header fields (e.g.
+            # an annexure page with no customer GSTIN of its own) - backfill
+            # any still-blank header field on `existing` from this page
+            # rather than assuming the first-seen page has the real data.
+            for f in fields(Invoice):
+                if f.name == "ITEM_LIST":
+                    continue
+                if getattr(existing, f.name) in ("", 0.0) and getattr(invoice, f.name) not in ("", 0.0):
+                    setattr(existing, f.name, getattr(invoice, f.name))
+            # Check every item in this incoming page against `seen` as it
+            # stood *before* this page started merging, then fold in this
+            # page's own fingerprints only once the whole page is done -
+            # otherwise two genuinely distinct rows on the same page that
+            # happen to share identical numbers (e.g. a "Type A" and "Type
+            # B" tool set both priced/quantified the same) would collide
+            # with each other and the second gets wrongly dropped as a
+            # same-page "duplicate", when the fingerprint dedup is only
+            # meant to catch a whole page re-scanned twice.
             seen = seen_items_by_number[key]
+            incoming_fingerprints = set()
             for item in invoice.ITEM_LIST:
                 fingerprint = (item.HSN, item.QTY, item.UNIT_PRICE, item.AMOUNT)
                 if fingerprint not in seen:
                     existing.ITEM_LIST.append(item)
-                    seen.add(fingerprint)
+                    incoming_fingerprints.add(fingerprint)
+            seen.update(incoming_fingerprints)
         else:
             seen_items_by_number[key] = {
                 (item.HSN, item.QTY, item.UNIT_PRICE, item.AMOUNT) for item in invoice.ITEM_LIST
             }
             invoices_by_number[key] = invoice
             order.append(key)
-    return [invoices_by_number[k] for k in order]
+    return _merge_duplicate_totals(
+        [invoices_by_number[k] for k in order],
+        [source_ids_by_number[k] for k in order],
+    )
 
 
-def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str, dict]:
+def _merge_duplicate_totals(invoices: list[Invoice], source_ids: list[set[str]]) -> list[Invoice]:
+    """Fold together invoices that share a source PDF and have byte-identical
+    BASE_VALUE and GROSS_TOTAL - two genuinely different invoices in the same
+    PDF would not coincidentally match both totals to the cent, so a match
+    here means the same underlying transaction was extracted twice under two
+    different "invoice number" values (e.g. the vendor's real Tax Invoice
+    Number on one page, and an internal Billing No./voucher number on a
+    companion accounting page describing the same sale - a case the prompt
+    asks the model to avoid, but can't guarantee against every time).
+
+    Keeps whichever copy has more populated header fields (a proxy for which
+    extraction is more reliable - in practice the wrong copy tends to be
+    missing fields like IRN_NO/CUSTOMER_GST_NO, or to have VENDOR_GST_NO and
+    CUSTOMER_GST_NO swapped), backfilling any field still blank on the kept
+    copy from the discarded one. The discarded copy's ITEM_LIST is dropped
+    entirely rather than merged in - its items are near-certainly the same
+    line items already present on the kept copy under its own extraction."""
+    def populated_count(inv: Invoice) -> int:
+        return sum(
+            1 for f in fields(Invoice)
+            if f.name != "ITEM_LIST" and getattr(inv, f.name) not in ("", 0.0)
+        )
+
+    kept: list[Invoice] = []
+    kept_sources: list[set[str]] = []
+    for invoice, srcs in zip(invoices, source_ids):
+        for i, existing in enumerate(kept):
+            if (
+                srcs & kept_sources[i]
+                and invoice.GROSS_TOTAL != 0
+                and round(invoice.GROSS_TOTAL, 2) == round(existing.GROSS_TOTAL, 2)
+                and round(invoice.BASE_VALUE, 2) == round(existing.BASE_VALUE, 2)
+            ):
+                primary, other = (
+                    (existing, invoice)
+                    if populated_count(existing) >= populated_count(invoice)
+                    else (invoice, existing)
+                )
+                for f in fields(Invoice):
+                    if f.name == "ITEM_LIST":
+                        continue
+                    if getattr(primary, f.name) in ("", 0.0) and getattr(other, f.name) not in ("", 0.0):
+                        setattr(primary, f.name, getattr(other, f.name))
+                kept[i] = primary
+                kept_sources[i] |= srcs
+                break
+        else:
+            kept.append(invoice)
+            kept_sources.append(srcs)
+    return kept
+
+
+def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str, list[dict] | dict]:
+    """Returns (key, list-of-invoice-dicts) on success - usually one dict,
+    more if the page shows multiple invoices - or (key, {"error": ...}) on
+    failure. Callers distinguish the two by type: a dict means failure, a
+    list means success (even an empty one, if extraction somehow yields no
+    invoices)."""
     key = f"{os.path.basename(pdf_path)}#page{page_num}"
     try:
         return key, extract_receipt_with_retry(image_bytes)
@@ -442,17 +630,24 @@ def main():
             logger.exception(f"failed to render {os.path.basename(pdf_path)}")
 
     results = []
-    for key, result in executor.map(lambda args: process_page(*args), pages):
-        if is_blank_result(result):
-            logger.info(f"skipped (blank): {key}")
-            continue
-        if "error" in result:
+    # ThreadPoolExecutor.map yields results in the same order as `pages`
+    # (despite running concurrently), so zipping the two together safely
+    # recovers which source PDF each result came from - needed by
+    # group_into_invoices() to fold blank-invoice-number pages into the
+    # right invoice.
+    for (pdf_path, _, _), (key, result) in zip(pages, executor.map(lambda args: process_page(*args), pages)):
+        if isinstance(result, dict):  # process_page's {"error": ...} sentinel
             logger.info(f"skipped (failed): {key}")
             continue
-        results.append(result)
-        logger.info(f"done: {key}")
+        kept = [invoice for invoice in result if not is_blank_result(invoice)]
+        if not kept:
+            logger.info(f"skipped (blank): {key}")
+            continue
+        source = os.path.basename(pdf_path)
+        results.extend((source, invoice) for invoice in kept)
+        logger.info(f"done: {key} ({len(kept)} invoice(s))")
 
-    invoices = group_into_invoices(results)
+    invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
     output = [invoice.to_dict() for invoice in invoices]
 
     try:
