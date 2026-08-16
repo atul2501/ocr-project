@@ -92,15 +92,22 @@ IMPORTANT EXTRACTION RULES:
   summarize the items already listed above them, so including them as a
   separate entry double-counts that value. Skip these rows entirely; only
   the individual priced rows they summarize belong in "ITEMS".
+- A "Weight" column (e.g. a transporter bill's per-row weight in kg/tons)
+  is never the same thing as "QUANTITY" - do not put a weight value into
+  QUANTITY just because it is the only per-row number on that line besides
+  the amount. Put it in that item's "WEIGHT" field instead. If the table
+  has no column actually labelled Qty/Quantity/Nos/Units for that row,
+  leave QUANTITY "" rather than substituting weight, count of vehicles, or
+  any other nearby number.
 - Extract GST components separately: CGST, SGST, IGST, UTGST and Cess.
 - Extract HSN/SAC codes whenever visible.
 - Extract Indian GSTIN, PAN, CIN and other statutory identifiers when visible.
 - Read clearly visible handwritten information, but do not guess unclear handwriting.
 - Keep dates in YYYY-MM-DD format when unambiguous.
 - Use numeric values for quantities, rates, taxes and amounts when clearly readable.
-- Every amount/quantity/rate field (QUANTITY, UNIT_PRICE, RATE, LINE_TOTAL,
-  AMOUNT, TOTAL_AMOUNT, every *_AMOUNT under TAX, and every field under
-  AMOUNTS) must be a plain numeric string only - digits, at most one decimal
+- Every amount/quantity/rate field (QUANTITY, WEIGHT, UNIT_PRICE, RATE,
+  LINE_TOTAL, AMOUNT, TOTAL_AMOUNT, every *_AMOUNT under TAX, and every
+  field under AMOUNTS) must be a plain numeric string only - digits, at most one decimal
   point, optional leading minus sign. Do not include currency symbols (Rs,
   INR, $, or a rupee sign), thousands separators other than what's printed,
   unit suffixes (kg, pcs, %), or any other character. If the printed value
@@ -305,6 +312,8 @@ the page, wrapped in an array as described above:
       "SAC_CODE": "",
       "QUANTITY": "",
       "UOM": "",
+      "WEIGHT": "",
+      "WEIGHT_UNIT": "",
       "UNIT_PRICE": "",
       "GROSS_AMOUNT": "",
       "DISCOUNT": "",

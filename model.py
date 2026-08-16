@@ -284,6 +284,8 @@ class InvoiceItem:
     HSN: str = ""
     QTY: float = 0.0
     UOM: str = ""
+    WEIGHT: float = 0.0
+    WEIGHT_UNIT: str = ""
     UNIT_PRICE: float = 0.0
     AMOUNT: float = 0.0
     VEHICLE_NUMBER: str = ""
@@ -295,6 +297,8 @@ class InvoiceItem:
             HSN=item.get("HSN_CODE", ""),
             QTY=_to_float(item.get("QUANTITY", "")),
             UOM=item.get("UOM", ""),
+            WEIGHT=_to_float(item.get("WEIGHT", "")),
+            WEIGHT_UNIT=item.get("WEIGHT_UNIT", ""),
             UNIT_PRICE=_to_float(item.get("UNIT_PRICE", "")),
             AMOUNT=_to_float(item.get("LINE_TOTAL", "")),
             VEHICLE_NUMBER=item.get("VEHICLE_NUMBER", ""),
