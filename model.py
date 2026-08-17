@@ -194,17 +194,16 @@ def _first_value(*values):
     return ""
 
 
-# Named logistics/freight-related charges that each get their own header
-# field on Invoice (WEIGHMENT_CHARGES, PARKING_CHARGES, ...) rather than
-# being folded into ITEM_LIST. Order matters when matching an
-# ADDITIONAL_CHARGES description below: most specific phrase first, since
-# "LOADING" is itself a substring of "UNLOADING", which is itself a
-# substring of "EMPTY UNLOADING" - checking in this order (and stopping at
-# the first match per charge) means a genuine "EMPTY UNLOADING" charge can
-# never be misclassified as a plain "LOADING" one. FREIGHT_AMOUNT has no
-# field here: freight is the primary billed service on a GTA bill, so it's
-# already carried in ITEMS/ITEM_LIST, and including it here too would
-# double it up.
+# Named logistics/freight-related charges that each become their own row in
+# ITEM_LIST (e.g. "Weighment Charges") rather than a plain goods/service
+# line. Order matters when matching an ADDITIONAL_CHARGES description below:
+# most specific phrase first, since "LOADING" is itself a substring of
+# "UNLOADING", which is itself a substring of "EMPTY UNLOADING" - checking
+# in this order (and stopping at the first match per charge) means a
+# genuine "EMPTY UNLOADING" charge can never be misclassified as a plain
+# "LOADING" one. FREIGHT_AMOUNT has no field here: freight is the primary
+# billed service on a GTA bill, so it's already carried in ITEMS/ITEM_LIST,
+# and including it here too would double it up.
 _NAMED_CHARGE_FIELDS = [
     ("EMPTY_UNLOADING_CHARGES", ("EMPTY UNLOADING", "EMPTY UNLOAD")),
     ("UNLOADING_CHARGES", ("UNLOADING",)),
@@ -251,10 +250,9 @@ def _to_float(value) -> float:
         return 0.0
 
 
-def _build_named_charges(data: dict) -> dict[str, float]:
+def _named_charge_amounts(data: dict) -> dict[str, float]:
     """Map each of the fixed named logistics/freight charge types (see
-    _NAMED_CHARGE_FIELDS) to its amount, for Invoice's WEIGHMENT_CHARGES/
-    PARKING_CHARGES/... header fields. Prefers an explicit LOGISTICS.<field>
+    _NAMED_CHARGE_FIELDS) to its amount. Prefers an explicit LOGISTICS.<field>
     value (unambiguous), falling back to scanning ADDITIONAL_CHARGES by
     description keyword - the model sometimes reports the same charge as a
     described ADDITIONAL_CHARGES row instead of filling the matching
@@ -292,6 +290,20 @@ def _build_named_charges(data: dict) -> dict[str, float]:
                 charges[other] = 0.0
 
     return charges
+
+
+def _build_charge_items(data: dict) -> list["InvoiceItem"]:
+    """Build one ITEM_LIST row per named logistics/freight charge type (see
+    _NAMED_CHARGE_FIELDS) that carries a non-zero amount - e.g. a
+    "Weighment Charges" row alongside the billed goods/service, matching how
+    SAP itself lines up every charge as its own item rather than a
+    header-level surcharge field."""
+    charges = _named_charge_amounts(data)
+    return [
+        InvoiceItem(DESCRIPTION=name.replace("_", " ").title(), AMOUNT=amount)
+        for name, _ in _NAMED_CHARGE_FIELDS
+        if (amount := charges[name])
+    ]
 
 
 @dataclass
@@ -345,13 +357,6 @@ class Invoice:
     ORDER_DATE: str = ""
     VENDOR_PAN_NO: str = ""
     CUSTOMER_PAN_NO: str = ""
-    WEIGHMENT_CHARGES: float = 0.0
-    PARKING_CHARGES: float = 0.0
-    LOADING_CHARGES: float = 0.0
-    UNLOADING_CHARGES: float = 0.0
-    EMPTY_UNLOADING_CHARGES: float = 0.0
-    DETENTION_CHARGES: float = 0.0
-    DEMURRAGE_CHARGES: float = 0.0
     VEHICLE_NUMBER: str = ""
     ITEM_LIST: list[InvoiceItem] = field(default_factory=list)
 
@@ -368,7 +373,7 @@ class Invoice:
         delivery = data.get("DELIVERY", {})
 
         item_list = cls._build_item_list(data)
-        named_charges = _build_named_charges(data)
+        item_list.extend(_build_charge_items(data))
         gross_total = _to_float(amounts.get("TOTAL_AMOUNT", ""))
         total_tax = (
             _to_float(tax.get("IGST_AMOUNT", ""))
@@ -424,13 +429,6 @@ class Invoice:
                 customer.get("PAN"),
                 _pan_from_gstin(_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN"))),
             ),
-            WEIGHMENT_CHARGES=named_charges["WEIGHMENT_CHARGES"],
-            PARKING_CHARGES=named_charges["PARKING_CHARGES"],
-            LOADING_CHARGES=named_charges["LOADING_CHARGES"],
-            UNLOADING_CHARGES=named_charges["UNLOADING_CHARGES"],
-            EMPTY_UNLOADING_CHARGES=named_charges["EMPTY_UNLOADING_CHARGES"],
-            DETENTION_CHARGES=named_charges["DETENTION_CHARGES"],
-            DEMURRAGE_CHARGES=named_charges["DEMURRAGE_CHARGES"],
             VEHICLE_NUMBER=_first_value(logistics.get("VEHICLE_NUMBER"), delivery.get("VEHICLE_NUMBER")),
             ITEM_LIST=item_list,
         )
@@ -439,11 +437,12 @@ class Invoice:
     def _build_item_list(data: dict) -> list["InvoiceItem"]:
         """ITEM_LIST is built only from the "ITEMS" array - the actual
         goods/service lines being billed (e.g. the freight/transportation
-        charge itself on a GTA bill). Named add-on charges belong in the
-        WEIGHMENT_CHARGES/PARKING_CHARGES/... header fields instead (see
-        _build_named_charges) - the prompt asks the model to route these
-        into ADDITIONAL_CHARGES specifically so they never land in ITEMS to
-        begin with."""
+        charge itself on a GTA bill). Named add-on charges are appended to
+        ITEM_LIST separately, as their own rows (see _build_charge_items) -
+        the prompt asks the model to route these into ADDITIONAL_CHARGES
+        specifically so they never land in ITEMS to begin with, and are
+        added back in as ITEM_LIST rows afterwards rather than being read
+        from ITEMS here."""
         items = [InvoiceItem.from_dict(item) for item in data.get("ITEMS", [])]
         # The model occasionally echoes the schema's example ITEMS entry
         # (an all-blank template row, shown to illustrate the shape) as a
@@ -516,10 +515,10 @@ def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
     same tradeoff already made for the LOGISTICS/ADDITIONAL_CHARGES
     dedup above.
 
-    The named charge fields (WEIGHMENT_CHARGES, PARKING_CHARGES, ...) are
-    plain scalars, like IGST/CGST/SGST, so they need no special merge
-    handling here - the generic backfill loop below already fills any of
-    them still blank (0.0) on `existing` from a later page that has a value.
+    The named logistics/freight charges (weighment, parking, ...) are now
+    ITEM_LIST rows rather than header scalars, so they need no special merge
+    handling here either - they go through the same item fingerprint dedup
+    as any other ITEM_LIST row above.
 
     A final pass then folds together any two invoices that share a
     source_id and have byte-identical BASE_VALUE and GROSS_TOTAL - see
