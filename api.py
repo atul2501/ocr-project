@@ -26,6 +26,7 @@ API_KEYS = [
             '59d963bc579f4d9b8020c739dadbf798.sLp5W442w8ctn4KptTzcT5TU',
             '05bdcd9506cf413995102efc4c27a2ca.1b8-iPCwnBg1lJmccND9w0YZ',
             'a96c2d79ded643caa217bbc0c185796d.-R6IC1WvWzARUphYcpMZ5mUJ',
+            '5c142e3dddbe4c00af461beb686cfd36.qA5pDYNm0V79DCnjL7mXV6Gy',
             ]
 
 MAX_WORKERS = 10  # concurrent Ollama requests, shared by every caller in this process (CLI batch run + all API requests) so load never exceeds this regardless of how many PDFs come in at once; extra pages simply wait in the executor's internal queue
