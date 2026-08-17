@@ -1,14 +1,34 @@
-2026-08-12 17:19:12,958 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-12 17:19:12,966 INFO done: tmpn6cms95m.pdf#page1
-2026-08-12 17:19:31,130 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-12 17:19:37,166 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-12 17:19:37,174 INFO done: tmpn6cms95m.pdf#page2
-2026-08-12 17:19:37,175 INFO done: tmpn6cms95m.pdf#page3
-2026-08-12 17:35:48,438 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-12 17:35:48,442 INFO done: tmppspp619k.pdf#page1
-2026-08-12 17:44:05,489 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-12 17:44:05,493 INFO done: tmpckam3cd_.pdf#page1
-2026-08-12 17:44:20,329 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-12 17:44:20,344 INFO done: tmpckam3cd_.pdf#page2
-2026-08-12 17:44:26,174 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-12 17:44:26,179 INFO done: tmpckam3cd_.pdf#page3
+2026-08-16 19:01:37,761 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:01:52,129 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:01:52,134 INFO done: India_Transport_FB60.pdf#page1 (1 invoice(s))
+2026-08-16 19:01:52,135 INFO skipped (blank): India_Transport_FB60.pdf#page2
+2026-08-16 19:03:27,142 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:27,222 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:31,010 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:32,033 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:32,956 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:34,089 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:36,965 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:37,769 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:39,921 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:43,467 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:03:43,480 INFO done: Kunal_Logistics_FB60.pdf#page1 (1 invoice(s))
+2026-08-16 19:03:43,481 INFO skipped (blank): Kunal_Logistics_FB60.pdf#page2
+2026-08-16 19:03:43,481 INFO skipped (blank): Kunal_Logistics_FB60.pdf#page3
+2026-08-16 19:03:43,481 INFO skipped (blank): Kunal_Logistics_FB60.pdf#page4
+2026-08-16 19:03:43,481 INFO skipped (blank): Kunal_Logistics_FB60.pdf#page5
+2026-08-16 19:03:43,481 INFO skipped (blank): Kunal_Logistics_FB60.pdf#page6
+2026-08-16 19:03:43,481 INFO skipped (blank): Kunal_Logistics_FB60.pdf#page7
+2026-08-16 19:03:43,481 INFO done: Kunal_Logistics_FB60.pdf#page8 (1 invoice(s))
+2026-08-16 19:03:43,482 INFO skipped (blank): Kunal_Logistics_FB60.pdf#page9
+2026-08-16 19:03:43,482 INFO skipped (blank): Kunal_Logistics_FB60.pdf#page10
+2026-08-16 19:10:55,126 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:10:55,132 INFO skipped (blank): tmpvsmlqnf_.pdf#page2
+2026-08-16 19:10:59,007 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:10:59,013 INFO skipped (blank): tmpvsmlqnf_.pdf#page3
+2026-08-16 19:11:14,176 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:11:14,186 INFO done: tmpvsmlqnf_.pdf#page1 (1 invoice(s))
+2026-08-16 19:11:23,468 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:11:23,473 INFO skipped (blank): tmpvsmlqnf_.pdf#page4
+2026-08-16 19:13:34,051 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-16 19:13:34,072 INFO done: tmppsx6tlp4.pdf#page1 (1 invoice(s))
