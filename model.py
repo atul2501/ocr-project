@@ -254,6 +254,29 @@ def _pan_from_gstin(gstin: str) -> str:
     return candidate if _PAN_PATTERN.match(candidate) else ""
 
 
+_PLACE_OF_SUPPLY_PATTERN = re.compile(r"^\s*(\d{1,2})\s*[-–:]?\s*(.*)$")
+
+
+def _split_place_of_supply(document: dict, gst_compliance: dict) -> tuple[str, str]:
+    """Split the combined "27- MAHARASHTRA"-style Place of Supply value the
+    model returns into its numeric GST state code and state name - SAP
+    wants these as two separate fields (PLACE_OF_SUPPLY_CODE,
+    PLACE_OF_SUPPLY_STATE). GST_COMPLIANCE has its own dedicated
+    PLACE_OF_SUPPLY_STATE_CODE raw field - prefer that for the code when the
+    model filled it in directly (unambiguous), otherwise fall back to the
+    leading digits parsed off the combined text. There's no dedicated raw
+    field for the state name alone, so it's always parsed out of the
+    combined DOCUMENT.PLACE_OF_SUPPLY / GST_COMPLIANCE.PLACE_OF_SUPPLY text,
+    which is almost always printed as "<code>-<state name>" or "<code> -
+    <state name>"."""
+    raw = _first_value(document.get("PLACE_OF_SUPPLY"), gst_compliance.get("PLACE_OF_SUPPLY"))
+    match = _PLACE_OF_SUPPLY_PATTERN.match(raw) if raw else None
+    parsed_code = match.group(1) if match else ""
+    parsed_state = match.group(2).strip() if match else raw.strip() if raw else ""
+    code = _first_value(gst_compliance.get("PLACE_OF_SUPPLY_STATE_CODE"), parsed_code)
+    return code, parsed_state
+
+
 def _to_float(value) -> float:
     """Parse an extracted amount/quantity string into a real number for
     SAP - "", None or anything unparseable becomes 0 (SAP's DEC/NUMC fields
@@ -368,7 +391,8 @@ class Invoice:
     VENDOR_GST_NO: str = ""
     CUSTOMER_NAME: str = ""
     CUSTOMER_GST_NO: str = ""
-    PLACE_OF_SUPPLY: str = ""
+    PLACE_OF_SUPPLY_CODE: str = ""
+    PLACE_OF_SUPPLY_STATE: str = ""
     BASE_VALUE: float = 0.0
     IGST: float = 0.0
     CGST: float = 0.0
@@ -395,6 +419,7 @@ class Invoice:
 
         item_list = cls._build_item_list(data)
         item_list.extend(_build_charge_items(data))
+        place_of_supply_code, place_of_supply_state = _split_place_of_supply(document, gst_compliance)
         gross_total = _to_float(amounts.get("TOTAL_AMOUNT", ""))
         total_tax = (
             _to_float(tax.get("IGST_AMOUNT", ""))
@@ -437,7 +462,8 @@ class Invoice:
             VENDOR_GST_NO=supplier.get("GSTIN", ""),
             CUSTOMER_NAME=_first_value(customer.get("NAME"), customer.get("LEGAL_NAME")),
             CUSTOMER_GST_NO=_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN")),
-            PLACE_OF_SUPPLY=_first_value(document.get("PLACE_OF_SUPPLY"), gst_compliance.get("PLACE_OF_SUPPLY")),
+            PLACE_OF_SUPPLY_CODE=place_of_supply_code,
+            PLACE_OF_SUPPLY_STATE=place_of_supply_state,
             BASE_VALUE=base_value,
             IGST=_to_float(tax.get("IGST_AMOUNT", "")),
             CGST=_to_float(tax.get("CGST_AMOUNT", "")),
