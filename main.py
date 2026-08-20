@@ -1,20 +1,15 @@
 import asyncio
-import glob
-import json
 import os
 from tempfile import NamedTemporaryFile
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from model import (
-    INVOICE_DIR,
-    OUTPUT_PATH,
-    cleanup_old_output,
     executor,
     group_into_invoices,
     is_blank_invoice,
     is_blank_result,
     logger,
-    pdf_to_images,
     process_page,
+    split_pdf_pages,
 )
 
 app = FastAPI(title="Receipt OCR API")
@@ -38,10 +33,10 @@ async def _process_pdf(pdf_bytes: bytes):
 
     try:
         loop = asyncio.get_running_loop()
-        # Rendering/sharpening is quick CPU work; run it off the event loop
+        # Splitting into pages is quick CPU work; run it off the event loop
         # on the default executor so it doesn't steal an OCR queue slot.
         pages = await loop.run_in_executor(
-            None, lambda: list(enumerate(pdf_to_images(tmp_path), start=1))
+            None, lambda: list(enumerate(split_pdf_pages(tmp_path), start=1))
         )
 
         # Submit to the shared process-wide executor (main.executor, capped
@@ -49,8 +44,8 @@ async def _process_pdf(pdf_bytes: bytes):
         # so extra pages/requests queue behind the cap without freezing the
         # FastAPI event loop for other concurrent uploads.
         futures = [
-            loop.run_in_executor(executor, process_page, tmp_path, page_num, image_bytes)
-            for page_num, image_bytes in pages
+            loop.run_in_executor(executor, process_page, tmp_path, page_num, page_bytes)
+            for page_num, page_bytes in pages
         ]
 
         source_id = os.path.basename(tmp_path)
@@ -71,7 +66,6 @@ async def _process_pdf(pdf_bytes: bytes):
 
     invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
     output = [invoice.to_dict() for invoice in invoices]
-    cleanup_old_output()
     return output
 
 

@@ -2,44 +2,70 @@ import itertools
 import os
 import threading
 
-from ollama import Client
+import httpx
 
-HOST = 'https://ollama.com'
-KEY_ENV_PREFIX = 'OLLAMA_API_KEY_'
-
-MODEL = 'minimax-m3'  # vision-capable, free tier; tested more accurate than gemma4:31b on GSTIN extraction
+HOST = 'https://api.chatpdf.com/v1'
+KEY_ENV_PREFIX = 'CHATPDF_API_KEY_'
 
 INVOICE_DIR = 'invoice'
-PDF_ZOOM = 5  # render scale; higher = sharper but slower/bigger
 OUTPUT_PATH = 'out.json'
 LOG_PATH = 'process.log'
-SHARPENED_DIR = 'output'
-SHARPENED_MAX_AGE_SECONDS = 60 * 60  # sharpened debug page PDFs in SHARPENED_DIR older than this get auto-deleted
 
 # Fill in as many keys as you have - 1 is fine, so is 8. Requests rotate
-# across whichever ones are non-empty here. An OLLAMA_API_KEY_<n> environment
+# across whichever ones are non-empty here. A CHATPDF_API_KEY_<n> environment
 # variable, if set, overrides the entry at that position (1-indexed).
 API_KEYS = [
-            'dd633d6cc5754397a5fe335fce8e7e8a.xV0UoGbMFC2xP332Y-Q2rlme',
-            '84a4197f524a430188e998fd9255f41b.6Dwy42j1n653P0OlOoPQovmK',
-            '0e79c0347e2945428054bb16a743db0f.exH-Kxg7zCG7PUrlO7-KxpFi',
-            '59d963bc579f4d9b8020c739dadbf798.sLp5W442w8ctn4KptTzcT5TU',
-            '05bdcd9506cf413995102efc4c27a2ca.1b8-iPCwnBg1lJmccND9w0YZ',
-            'a96c2d79ded643caa217bbc0c185796d.-R6IC1WvWzARUphYcpMZ5mUJ',
+            'sec_O6RW3TxuDTTIj7O2dfFbuPOy4eaxErlE',
             ]
 
-MAX_WORKERS = 10  # concurrent Ollama requests, shared by every caller in this process (CLI batch run + all API requests) so load never exceeds this regardless of how many PDFs come in at once; extra pages simply wait in the executor's internal queue
-MAX_RETRIES = 2  # retries after the first attempt (3 attempts total per page)
+MAX_WORKERS = 10  # concurrent ChatPDF requests (one per document), shared by every caller in this process (CLI batch run + all API requests) so load never exceeds this regardless of how many PDFs come in at once; extra documents simply wait in the executor's internal queue
+MAX_RETRIES = 2  # retries after the first attempt (3 attempts total per document)
 RETRY_BACKOFF_BASE = 2  # seconds
 RETRY_BACKOFF_CAP = 30  # seconds
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
-
-SHARPEN_RADIUS = 2  # UnsharpMask: pixel radius of the blur used to detect edges
-SHARPEN_PERCENT = 200  # UnsharpMask: strength of the sharpening effect
-SHARPEN_THRESHOLD = 1  # UnsharpMask: minimum brightness change to be sharpened (avoids amplifying noise)
-CONTRAST_CUTOFF = 1  # autocontrast: percent of darkest/lightest pixels clipped before stretching the range
+REQUEST_TIMEOUT = 120  # seconds; uploading + getting a first answer on a large multi-page PDF can be slow
 
 _lock = threading.Lock()
+
+
+class ChatPDFClient:
+    """Thin wrapper over the ChatPDF REST API (https://www.chatpdf.com/docs/api) -
+    there's no official Python SDK, so this covers just the 3 calls this
+    project needs: upload a PDF as a "source", ask one chat question against
+    that source, and delete the source again once we're done with it."""
+
+    def __init__(self, api_key: str, host: str = HOST):
+        self._http = httpx.Client(base_url=host, timeout=REQUEST_TIMEOUT)
+        self._headers = {'x-api-key': api_key}
+
+    def add_source(self, pdf_bytes: bytes, filename: str = 'document.pdf') -> str:
+        response = self._http.post(
+            '/sources/add-file',
+            headers=self._headers,
+            files={'file': (filename, pdf_bytes, 'application/pdf')},
+        )
+        response.raise_for_status()
+        return response.json()['sourceId']
+
+    def chat(self, source_id: str, prompt: str) -> str:
+        response = self._http.post(
+            '/chats/message',
+            headers=self._headers,
+            json={
+                'sourceId': source_id,
+                'messages': [{'role': 'user', 'content': prompt}],
+            },
+        )
+        response.raise_for_status()
+        return response.json()['content']
+
+    def delete_source(self, source_id: str) -> None:
+        response = self._http.post(
+            '/sources/delete',
+            headers=self._headers,
+            json={'sources': [source_id]},
+        )
+        response.raise_for_status()
 
 
 def _load_keys() -> list[str]:
@@ -57,18 +83,18 @@ def _load_keys() -> list[str]:
         i += 1
     if not keys:
         raise RuntimeError(
-            "No Ollama API keys found. Add at least one to API_KEYS in api.py, "
+            "No ChatPDF API keys found. Add at least one to API_KEYS in api.py, "
             f"or set {KEY_ENV_PREFIX}1, {KEY_ENV_PREFIX}2, ... in the environment."
         )
     return keys
 
 
-_clients = [Client(host=HOST, headers={'Authorization': f"Bearer {key}"}) for key in _load_keys()]
+_clients = [ChatPDFClient(key) for key in _load_keys()]
 _clients_cycle = itertools.cycle(_clients)
 
 
-def get_client() -> Client:
+def get_client() -> ChatPDFClient:
     """Return the next client in round-robin rotation across all configured API keys,
-    so requests are spread across accounts instead of exhausting one free-tier limit."""
+    so requests are spread across accounts instead of exhausting one rate limit."""
     with _lock:
         return next(_clients_cycle)

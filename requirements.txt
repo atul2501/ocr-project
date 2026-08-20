@@ -23,17 +23,14 @@ networkx==3.6.1
 nibabel==5.4.2
 nipype==1.11.0
 numpy==2.5.2
-ollama==0.6.2
 packaging==26.3
 pandas==3.0.5
 pathlib==1.0.1
-Pillow==12.3.0
 prov==3.1.0
 puremagic==2.2.0
 pydantic==2.13.4
 pydantic_core==2.46.4
 pydot==4.0.1
-pymupdf==1.28.2
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
 python-multipart==0.0.32

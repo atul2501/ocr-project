@@ -1,37 +1,27 @@
 import glob
-import io
 import json
 import logging
 import os
 import random
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, fields
-from prompt import PROMPTS
+from prompt import PROMPT
 import httpx
 import pymupdf
 from api import (
-    CONTRAST_CUTOFF,
     INVOICE_DIR,
     LOG_PATH,
     MAX_RETRIES,
     MAX_WORKERS,
-    MODEL,
     OUTPUT_PATH,
-    PDF_ZOOM,
     RETRY_BACKOFF_BASE,
     RETRY_BACKOFF_CAP,
     RETRYABLE_STATUS_CODES,
-    SHARPEN_PERCENT,
-    SHARPEN_RADIUS,
-    SHARPEN_THRESHOLD,
-    SHARPENED_DIR,
-    SHARPENED_MAX_AGE_SECONDS,
     get_client,
 )
-from ollama import ResponseError
-from PIL import Image, ImageFilter, ImageOps
 
 
 logging.basicConfig(
@@ -42,84 +32,72 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PROMPT = (PROMPTS)
-
 # Single process-wide executor. Reused across the CLI batch run (main()) and
 # every API request (api.py) so concurrent OCR calls are always capped at
 # MAX_WORKERS instead of each caller spinning up its own pool.
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 
-def sharpen_image(png_bytes: bytes) -> bytes:
-    with Image.open(io.BytesIO(png_bytes)) as img:
-        gray = ImageOps.autocontrast(img.convert('L'), cutoff=CONTRAST_CUTOFF)
-        sharpened = gray.filter(
-            ImageFilter.UnsharpMask(
-                radius=SHARPEN_RADIUS,
-                percent=SHARPEN_PERCENT,
-                threshold=SHARPEN_THRESHOLD,
-            )
-        )
-        buf = io.BytesIO()
-        sharpened.save(buf, format='PNG')
-        return buf.getvalue()
+def _delete_source(client, source_id: str) -> None:
+    try:
+        client.delete_source(source_id)
+    except httpx.HTTPError:
+        logger.warning(f"failed to delete ChatPDF source {source_id}")
 
 
-def save_sharpened_page(pdf_path: str, page_num: int, image_bytes: bytes) -> str:
-    os.makedirs(SHARPENED_DIR, exist_ok=True)
-    stem = os.path.splitext(os.path.basename(pdf_path))[0]
-    out_path = os.path.join(SHARPENED_DIR, f"{stem}_page{page_num}.pdf")
-    with Image.open(io.BytesIO(image_bytes)) as img:
-        img.convert('RGB').save(out_path, format='PDF')
-    return out_path
-
-
-def pdf_to_images(pdf_path: str) -> list[bytes]:
+def split_pdf_pages(pdf_path: str) -> list[bytes]:
+    """Split a PDF into its individual pages, each as its own small
+    single-page PDF (a native page extraction via pymupdf, not a re-rendered
+    image - so no quality loss and no risk of the file-size blowup a
+    re-rendered/sharpened page caused earlier). Uploading and extracting
+    each page independently, rather than the whole document in one ChatPDF
+    call, is what makes a page-by-page bundle of unrelated invoices (e.g. a
+    transporter's own invoice plus a sub-contractor's separate invoice for
+    the same shipment, mixed in with delivery notes/weighbridge tickets)
+    reliable: every page gets its own dedicated extraction call instead of
+    one call trying to exhaustively enumerate every invoice in a long,
+    mixed-content document, which testing showed is unreliable."""
     doc = pymupdf.open(pdf_path)
-    matrix = pymupdf.Matrix(PDF_ZOOM, PDF_ZOOM)
-    images = []
-    for page_num, page in enumerate(doc, start=1):
-        image_bytes = sharpen_image(page.get_pixmap(matrix=matrix).tobytes('png'))
-        save_sharpened_page(pdf_path, page_num, image_bytes)
-        images.append(image_bytes)
+    pages = []
+    for page_num in range(len(doc)):
+        single_page = pymupdf.open()
+        single_page.insert_pdf(doc, from_page=page_num, to_page=page_num)
+        pages.append(single_page.tobytes())
+        single_page.close()
     doc.close()
-    return images
+    return pages
 
 
-def cleanup_old_output() -> None:
-    """Delete sharpened debug page PDFs in SHARPENED_DIR older than
-    SHARPENED_MAX_AGE_SECONDS - keeps output/ from growing unbounded
-    across CLI runs and API requests."""
-    if not os.path.isdir(SHARPENED_DIR):
-        return
-    cutoff = time.time() - SHARPENED_MAX_AGE_SECONDS
-    for name in os.listdir(SHARPENED_DIR):
-        path = os.path.join(SHARPENED_DIR, name)
-        try:
-            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
-                os.remove(path)
-        except OSError:
-            logger.exception(f"failed to clean up {path}")
-
-
-def extract_receipt(image) -> list[dict]:
-    """Returns one raw extraction dict per invoice found on this page image -
+def extract_invoices(pdf_bytes: bytes) -> list[dict]:
+    """Returns one raw extraction dict per invoice found on this page -
     almost always a single-element list, but a page can genuinely show more
     than one separate invoice (e.g. two small bills photographed together),
     and the prompt asks the model to return one array entry per invoice in
-    that case. Every entry is kept - none may be silently dropped."""
-    response = get_client().chat(
-        model=MODEL,
-        messages=[
-            {
-                'role': 'user',
-                'content': PROMPT,
-                'images': [image],
-            }
-        ],
-        format='json',
-    )
-    text = response['message']['content']
+    that case. Every entry is kept - none may be silently dropped.
+
+    Uploads the page as a ChatPDF "source", asks it the extraction prompt
+    as a single chat message, and deletes the source again afterwards -
+    ChatPDF has no notion of a one-shot "analyze this file" call, only
+    persistent sources you chat against, so the upload/delete is done
+    around every extraction rather than reusing a source across calls.
+
+    (An earlier version of this function also ran extra "verify which
+    party is the vendor" follow-up questions and auto-swapped SUPPLIER/
+    CUSTOMER on disagreement. Testing showed that verification wasn't more
+    reliable than the main extraction - the same underlying model asked the
+    same kind of question again, sometimes 2-out-of-3-majority-voting a
+    correct answer into an incorrect one - so it was removed in favor of
+    the deterministic keyword-based rule in Invoice.from_dict, which
+    doesn't depend on the model's judgment at all.)"""
+    client = get_client()
+    source_id = client.add_source(pdf_bytes)
+    try:
+        text = client.chat(source_id, PROMPT)
+    finally:
+        # Cleanup doesn't need to block the response - fire it in the
+        # background so the caller isn't stuck waiting on ChatPDF's delete
+        # round-trip on top of the upload+chat call it actually needs.
+        threading.Thread(target=_delete_source, args=(client, source_id), daemon=True).start()
 
     try:
         parsed = json.loads(text)
@@ -136,19 +114,25 @@ def extract_receipt(image) -> list[dict]:
         parsed = [parsed]
     if not isinstance(parsed, list) or not parsed or not all(isinstance(p, dict) for p in parsed):
         raise ValueError(f"Model returned an unexpected JSON shape:\n{text}")
+
+    # Logged on every call (not just failures) so a result that parses fine
+    # but still ends up filtered out downstream as "blank" (e.g. the model
+    # set IS_TARGET_DOCUMENT false, or genuinely left every field empty) can
+    # be diagnosed from process.log instead of being a silent [].
+    logger.info(f"ChatPDF returned {len(parsed)} entrie(s): {json.dumps(parsed, ensure_ascii=False)}")
     return parsed
 
 
-def extract_receipt_with_retry(image: bytes) -> list[dict]:
+def extract_invoices_with_retry(pdf_bytes: bytes) -> list[dict]:
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 2):
         try:
-            return extract_receipt(image)
-        except ResponseError as e:
-            if e.status_code not in RETRYABLE_STATUS_CODES:
-                raise  # e.g. 404 model-not-found, 403 needs-subscription: never succeeds
+            return extract_invoices(pdf_bytes)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in RETRYABLE_STATUS_CODES:
+                raise  # e.g. 404 source-not-found, 403 invalid-key: never succeeds
             last_exc = e
-            logger.warning(f"attempt {attempt} failed (status {e.status_code}): {e}")
+            logger.warning(f"attempt {attempt} failed (status {e.response.status_code}): {e}")
         except (ConnectionError, httpx.RequestError, ValueError) as e:
             last_exc = e
             logger.warning(f"attempt {attempt} failed: {type(e).__name__}: {e}")
@@ -172,12 +156,15 @@ def _is_blank_value(value) -> bool:
     return value is None
 
 
+_TRUTHY_STRINGS = {"true", "yes", "y", "1"}
+
+
 def is_blank_result(result: dict) -> bool:
     """True if extraction found nothing usable - e.g. the page isn't a Tax
     Invoice/PO (blank page, cover sheet, etc.) or the model echoed the empty
     template back."""
     is_target = str(result.get("METADATA", {}).get("IS_TARGET_DOCUMENT", "")).strip().lower()
-    if is_target and is_target != "true":
+    if is_target and is_target not in _TRUTHY_STRINGS:
         return True  # model explicitly marked this page as not a target document
 
     return _is_blank_value(result)
@@ -236,6 +223,37 @@ def _item_fingerprint(item: "InvoiceItem") -> tuple:
     return (item.HSN, item.QTY, item.UNIT_PRICE, item.AMOUNT, item.VEHICLE_NUMBER)
 
 
+# Industry keywords that reliably identify the transport/logistics
+# business on a GTA/freight bill - not tied to any specific company, just
+# to the nature of a transporter's own trading name.
+_VENDOR_KEYWORDS = ("TRANSPORT", "LOGISTICS", "FLEET", "SHIPPING", "CARRIER", "FORWARDING", "CARGO")
+
+
+def _has_vendor_keyword(name: str) -> bool:
+    name = (name or "").upper()
+    return any(keyword in name for keyword in _VENDOR_KEYWORDS)
+
+
+def _resolve_supplier_customer(supplier: dict, customer: dict) -> tuple[dict, dict]:
+    """Deterministic override for which raw dict is actually SUPPLIER
+    (vendor) vs CUSTOMER: on a GTA/transporter bill, the vendor is reliably
+    the party whose name/legal name/trade name contains a transport-industry
+    keyword (see _VENDOR_KEYWORDS) - this held across every test invoice
+    regardless of which specific companies were involved, and is far more
+    reliable than the model's own vendor/customer judgment, which testing
+    showed gets this wrong on a large fraction of documents even under a
+    2-out-of-3 majority vote across independent re-checks (an AI "verifier"
+    is subject to the same confusion as the original extraction, not a more
+    authoritative second opinion). Only overrides when exactly one party's
+    name matches a keyword - if both or neither do, this can't disambiguate
+    and the model's own assignment is left untouched."""
+    supplier_name = " ".join(supplier.get(k, "") for k in ("NAME", "LEGAL_NAME", "TRADE_NAME"))
+    customer_name = " ".join(customer.get(k, "") for k in ("NAME", "LEGAL_NAME", "TRADE_NAME"))
+    if _has_vendor_keyword(customer_name) and not _has_vendor_keyword(supplier_name):
+        return customer, supplier
+    return supplier, customer
+
+
 _PAN_PATTERN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 
 
@@ -254,10 +272,103 @@ def _pan_from_gstin(gstin: str) -> str:
     return candidate if _PAN_PATTERN.match(candidate) else ""
 
 
+def _fix_swapped_gstins(supplier: dict, customer: dict) -> tuple[dict, dict]:
+    """Deterministic cross-check, distinct from _resolve_supplier_customer:
+    a GSTIN mechanically embeds its own PAN (see _pan_from_gstin), so if a
+    party's own extracted PAN doesn't match the PAN embedded in that same
+    party's extracted GSTIN, but DOES match the PAN embedded in the OTHER
+    party's GSTIN, the two GSTIN values were swapped between blocks even
+    though the party NAMES were already assigned correctly - a real
+    failure mode observed even after the name-based fix (e.g. the model
+    correctly wrote "Mahalaxmi Transport" as SUPPLIER and correctly read
+    its PAN, but filed the customer's GSTIN under SUPPLIER.GSTIN instead
+    of its own). Swaps just the two GSTIN values back when this is
+    unambiguous; leaves both untouched otherwise - it can only fire when at
+    least one party's PAN was independently extracted and is a clean match
+    for the other party's GSTIN, so it never guesses."""
+    supplier_gstin = supplier.get("GSTIN", "")
+    customer_gstin = customer.get("GSTIN", "")
+    if not supplier_gstin or not customer_gstin or supplier_gstin == customer_gstin:
+        return supplier, customer
+
+    supplier_pan = supplier.get("PAN", "")
+    customer_pan = customer.get("PAN", "")
+    supplier_embedded_pan = _pan_from_gstin(supplier_gstin)
+    customer_embedded_pan = _pan_from_gstin(customer_gstin)
+
+    supplier_pan_points_to_customer_gstin = (
+        supplier_pan and supplier_pan == customer_embedded_pan and supplier_pan != supplier_embedded_pan
+    )
+    customer_pan_points_to_supplier_gstin = (
+        customer_pan and customer_pan == supplier_embedded_pan and customer_pan != customer_embedded_pan
+    )
+
+    if supplier_pan_points_to_customer_gstin or customer_pan_points_to_supplier_gstin:
+        supplier = {**supplier, "GSTIN": customer_gstin}
+        customer = {**customer, "GSTIN": supplier_gstin}
+        logger.info(
+            f"GSTIN swap corrected via embedded-PAN cross-check: supplier GSTIN is now {customer_gstin}, "
+            f"customer GSTIN is now {supplier_gstin}"
+        )
+
+    return supplier, customer
+
+
 _PLACE_OF_SUPPLY_PATTERN = re.compile(r"^\s*(\d{1,2})\s*[-–:]?\s*(.*)$")
 
+# Official India GST state/UT codes - fixed by law as the first two digits
+# of every GSTIN, so this table never changes. Used only as a last-resort
+# fallback in _split_place_of_supply when the document never prints a
+# "Place of Supply" label at all: for ordinary domestic B2B supply, Place
+# of Supply defaults to the recipient's own registered state, which the
+# customer's own GSTIN already encodes mechanically - the same kind of
+# deterministic GSTIN-format derivation as _pan_from_gstin, not a guess
+# from an address or route field the way the prompt forbids the model
+# itself from doing.
+_GST_STATE_CODES = {
+    "01": "JAMMU AND KASHMIR",
+    "02": "HIMACHAL PRADESH",
+    "03": "PUNJAB",
+    "04": "CHANDIGARH",
+    "05": "UTTARAKHAND",
+    "06": "HARYANA",
+    "07": "DELHI",
+    "08": "RAJASTHAN",
+    "09": "UTTAR PRADESH",
+    "10": "BIHAR",
+    "11": "SIKKIM",
+    "12": "ARUNACHAL PRADESH",
+    "13": "NAGALAND",
+    "14": "MANIPUR",
+    "15": "MIZORAM",
+    "16": "TRIPURA",
+    "17": "MEGHALAYA",
+    "18": "ASSAM",
+    "19": "WEST BENGAL",
+    "20": "JHARKHAND",
+    "21": "ODISHA",
+    "22": "CHHATTISGARH",
+    "23": "MADHYA PRADESH",
+    "24": "GUJARAT",
+    "25": "DAMAN AND DIU",
+    "26": "DADRA AND NAGAR HAVELI AND DAMAN AND DIU",
+    "27": "MAHARASHTRA",
+    "28": "ANDHRA PRADESH (OLD)",
+    "29": "KARNATAKA",
+    "30": "GOA",
+    "31": "LAKSHADWEEP",
+    "32": "KERALA",
+    "33": "TAMIL NADU",
+    "34": "PUDUCHERRY",
+    "35": "ANDAMAN AND NICOBAR ISLANDS",
+    "36": "TELANGANA",
+    "37": "ANDHRA PRADESH",
+    "38": "LADAKH",
+    "97": "OTHER TERRITORY",
+}
 
-def _split_place_of_supply(document: dict, gst_compliance: dict) -> tuple[str, str]:
+
+def _split_place_of_supply(document: dict, gst_compliance: dict, customer_gstin: str) -> tuple[str, str]:
     """Split the combined "27- MAHARASHTRA"-style Place of Supply value the
     model returns into its numeric GST state code and state name - SAP
     wants these as two separate fields (PLACE_OF_SUPPLY_CODE,
@@ -268,13 +379,35 @@ def _split_place_of_supply(document: dict, gst_compliance: dict) -> tuple[str, s
     field for the state name alone, so it's always parsed out of the
     combined DOCUMENT.PLACE_OF_SUPPLY / GST_COMPLIANCE.PLACE_OF_SUPPLY text,
     which is almost always printed as "<code>-<state name>" or "<code> -
-    <state name>"."""
+    <state name>".
+
+    If the page never prints a Place of Supply at all, falls back to the
+    customer's own registered state (see _GST_STATE_CODES above) rather
+    than leaving both fields blank - this matches GST law's default rule
+    for ordinary domestic supply and is safe because it's read off the
+    customer's own printed GSTIN, not inferred from an address/route
+    field."""
     raw = _first_value(document.get("PLACE_OF_SUPPLY"), gst_compliance.get("PLACE_OF_SUPPLY"))
     match = _PLACE_OF_SUPPLY_PATTERN.match(raw) if raw else None
     parsed_code = match.group(1) if match else ""
     parsed_state = match.group(2).strip() if match else raw.strip() if raw else ""
     code = _first_value(gst_compliance.get("PLACE_OF_SUPPLY_STATE_CODE"), parsed_code)
-    return code, parsed_state
+
+    if not code:
+        gstin_code = (customer_gstin or "").strip()[:2]
+        if gstin_code in _GST_STATE_CODES:
+            code = gstin_code
+
+    # The state name is uniquely determined by the code under GST law - once
+    # a code is known (whether printed directly, parsed off the combined
+    # text, or derived from the customer's GSTIN), trust the lookup table
+    # over whatever free text happened to be parsed alongside it. That text
+    # can be a city/area name the model picked up from a route field rather
+    # than the actual state (e.g. "Khopoli" instead of "Maharashtra"), even
+    # when the code itself came out correct.
+    state = _GST_STATE_CODES.get(code, parsed_state)
+
+    return code, state
 
 
 def _to_float(value) -> float:
@@ -366,23 +499,36 @@ class InvoiceItem:
 
     @classmethod
     def from_dict(cls, item: dict) -> "InvoiceItem":
+        description = item.get("DESCRIPTION", "")
+        vehicle_number = item.get("VEHICLE_NUMBER", "")
+        hsn = item.get("HSN_CODE", "")
+        if vehicle_number and not hsn and "freight" not in description.lower():
+            # A GTA/transporter bill's primary ITEMS row is the freight
+            # charge for that trip, but the document itself very often
+            # never prints the word "Freight" - it describes the shipment
+            # instead (e.g. "20' Import Fixed", "40 Import / TEMU7220511").
+            # A per-row VEHICLE_NUMBER with no HSN is a reliable signal this
+            # is a transport row rather than a distinct HSN-coded product,
+            # so make the freight nature explicit rather than leaving only
+            # the container/movement text the model kept verbatim.
+            description = f"Freight Charges - {description}" if description else "Freight Charges"
         return cls(
-            DESCRIPTION=item.get("DESCRIPTION", ""),
-            HSN=item.get("HSN_CODE", ""),
+            DESCRIPTION=description,
+            HSN=hsn,
             QTY=_to_float(item.get("QUANTITY", "")),
             UOM=item.get("UOM", ""),
             WEIGHT=_to_float(item.get("WEIGHT", "")),
             WEIGHT_UNIT=item.get("WEIGHT_UNIT", ""),
             UNIT_PRICE=_to_float(item.get("UNIT_PRICE", "")),
             AMOUNT=_to_float(item.get("LINE_TOTAL", "")),
-            VEHICLE_NUMBER=item.get("VEHICLE_NUMBER", ""),
+            VEHICLE_NUMBER=vehicle_number,
         )
 
 
 @dataclass
 class Invoice:
-    """SAP-mapped invoice, built from one extracted page dict (the
-    "DOCUMENT"/"SUPPLIER"/"TAX"/... sections returned by extract_receipt)."""
+    """SAP-mapped invoice, built from one extracted invoice dict (the
+    "DOCUMENT"/"SUPPLIER"/"TAX"/... sections returned by extract_invoices)."""
     IRN_NO: str = ""
     IRN_DATE: str = ""
     INVOICE_NUMBER: str = ""
@@ -408,8 +554,8 @@ class Invoice:
     @classmethod
     def from_dict(cls, data: dict) -> "Invoice":
         document = data.get("DOCUMENT", {})
-        supplier = data.get("SUPPLIER", {})
-        customer = data.get("CUSTOMER", {})
+        supplier, customer = _resolve_supplier_customer(data.get("SUPPLIER", {}), data.get("CUSTOMER", {}))
+        supplier, customer = _fix_swapped_gstins(supplier, customer)
         purchase_order = data.get("PURCHASE_ORDER", {})
         tax = data.get("TAX", {})
         amounts = data.get("AMOUNTS", {})
@@ -419,7 +565,8 @@ class Invoice:
 
         item_list = cls._build_item_list(data)
         item_list.extend(_build_charge_items(data))
-        place_of_supply_code, place_of_supply_state = _split_place_of_supply(document, gst_compliance)
+        customer_gst_no = _first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN"))
+        place_of_supply_code, place_of_supply_state = _split_place_of_supply(document, gst_compliance, customer_gst_no)
         gross_total = _to_float(amounts.get("TOTAL_AMOUNT", ""))
         total_tax = (
             _to_float(tax.get("IGST_AMOUNT", ""))
@@ -461,7 +608,7 @@ class Invoice:
             VENDOR_NAME=_first_value(supplier.get("NAME"), supplier.get("LEGAL_NAME"), supplier.get("TRADE_NAME")),
             VENDOR_GST_NO=supplier.get("GSTIN", ""),
             CUSTOMER_NAME=_first_value(customer.get("NAME"), customer.get("LEGAL_NAME")),
-            CUSTOMER_GST_NO=_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN")),
+            CUSTOMER_GST_NO=customer_gst_no,
             PLACE_OF_SUPPLY_CODE=place_of_supply_code,
             PLACE_OF_SUPPLY_STATE=place_of_supply_state,
             BASE_VALUE=base_value,
@@ -472,10 +619,7 @@ class Invoice:
             INVOICE_DATE=document.get("INVOICE_DATE", ""),
             ORDER_DATE=purchase_order.get("PO_DATE", ""),
             VENDOR_PAN_NO=_first_value(supplier.get("PAN"), _pan_from_gstin(supplier.get("GSTIN", ""))),
-            CUSTOMER_PAN_NO=_first_value(
-                customer.get("PAN"),
-                _pan_from_gstin(_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN"))),
-            ),
+            CUSTOMER_PAN_NO=_first_value(customer.get("PAN"), _pan_from_gstin(customer_gst_no)),
             VEHICLE_NUMBER=_first_value(logistics.get("VEHICLE_NUMBER"), delivery.get("VEHICLE_NUMBER")),
             ITEM_LIST=item_list,
         )
@@ -496,7 +640,27 @@ class Invoice:
         # literal extra item alongside the real ones it found - drop any
         # item that carries no actual data, regardless of why it showed up,
         # rather than relying on a prompt instruction alone to prevent it.
-        return [item for item in items if not _is_blank_value(asdict(item))]
+        items = [item for item in items if not _is_blank_value(asdict(item))]
+
+        # Not auto-corrected: a fleet-owner bill can legitimately reuse the
+        # same vehicle across several trips, so there's no way to tell that
+        # apart from row 1's VEHICLE_NUMBER having been wrongly copied onto
+        # later rows (an observed OCR failure mode) without re-reading the
+        # page - guessing which case this is risks destroying correct data.
+        # Logged instead so it surfaces in process.log for manual review.
+        vehicle_amounts: dict[str, set] = {}
+        for item in items:
+            if item.VEHICLE_NUMBER:
+                vehicle_amounts.setdefault(item.VEHICLE_NUMBER, set()).add(item.AMOUNT)
+        for vehicle, amounts_seen in vehicle_amounts.items():
+            if len(amounts_seen) > 1:
+                logger.warning(
+                    f"VEHICLE_NUMBER '{vehicle}' repeated across ITEMS rows with "
+                    f"different amounts {sorted(amounts_seen)} - possible row-binding "
+                    f"error (or a genuinely reused vehicle); verify manually"
+                )
+
+        return items
 
     def to_dict(self) -> dict:
         """Every field is always present - SAP expects a fixed set of keys
@@ -519,12 +683,13 @@ def is_blank_invoice(invoice: Invoice) -> bool:
 
 def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
     """Turn a flat list of (source_id, extracted_dict) pairs into one Invoice
-    per distinct INVOICE_NUMBER - pages that share an invoice number (e.g. a
-    multi-page invoice) are merged into a single Invoice with combined
-    ITEM_LIST; distinct invoice numbers each get their own Invoice. A single
-    page can contribute more than one entry here (extract_receipt() returns
-    one dict per invoice it finds on that page), which this function doesn't
-    need to treat specially - each entry is just another item in the list.
+    per distinct INVOICE_NUMBER - entries that share an invoice number (e.g.
+    a multi-page invoice the model didn't fully merge itself) are merged into
+    a single Invoice with combined ITEM_LIST; distinct invoice numbers each
+    get their own Invoice. A single document can contribute more than one
+    entry here (extract_invoices() returns one dict per invoice it finds in
+    the document), which this function doesn't need to treat specially - each
+    entry is just another item in the list.
 
     source_id identifies the originating PDF (e.g. its basename) and exists
     to resolve pages that never print their own invoice number - such as a
@@ -593,26 +758,28 @@ def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
         source_ids_by_number.setdefault(key, set()).add(source_id)
         if key in invoices_by_number:
             existing = invoices_by_number[key]
-            # Pages for the same invoice can finish in any order (page
-            # processing runs concurrently), so whichever page happened to
-            # be seen first may be the one with blank header fields (e.g.
-            # an annexure page with no customer GSTIN of its own) - backfill
-            # any still-blank header field on `existing` from this page
-            # rather than assuming the first-seen page has the real data.
+            # The model can still emit two separate entries for the same
+            # invoice (e.g. it didn't fully merge a multi-page invoice
+            # itself, or two documents genuinely reference the same invoice
+            # number), and whichever entry happened to come first may be the
+            # one with blank header fields (e.g. an annexure page with no
+            # customer GSTIN of its own) - backfill any still-blank header
+            # field on `existing` from this entry rather than assuming the
+            # first-seen one has the real data.
             for f in fields(Invoice):
                 if f.name == "ITEM_LIST":
                     continue
                 if getattr(existing, f.name) in ("", 0.0) and getattr(invoice, f.name) not in ("", 0.0):
                     setattr(existing, f.name, getattr(invoice, f.name))
-            # Check every item in this incoming page against `seen` as it
-            # stood *before* this page started merging, then fold in this
-            # page's own fingerprints only once the whole page is done -
-            # otherwise two genuinely distinct rows on the same page that
-            # happen to share identical numbers (e.g. a "Type A" and "Type
-            # B" tool set both priced/quantified the same) would collide
-            # with each other and the second gets wrongly dropped as a
-            # same-page "duplicate", when the fingerprint dedup is only
-            # meant to catch a whole page re-scanned twice.
+            # Check every item in this incoming entry against `seen` as it
+            # stood *before* this entry started merging, then fold in this
+            # entry's own fingerprints only once it's done - otherwise two
+            # genuinely distinct rows in the same entry that happen to share
+            # identical numbers (e.g. a "Type A" and "Type B" tool set both
+            # priced/quantified the same) would collide with each other and
+            # the second gets wrongly dropped as a duplicate, when the
+            # fingerprint dedup is only meant to catch the same invoice
+            # content reported twice.
             seen = seen_items_by_number[key]
             incoming_fingerprints = set()
             for item in invoice.ITEM_LIST:
@@ -683,15 +850,14 @@ def _merge_duplicate_totals(invoices: list[Invoice], source_ids: list[set[str]])
     return kept
 
 
-def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str, list[dict] | dict]:
+def process_page(pdf_path: str, page_num: int, page_bytes: bytes) -> tuple[str, list[dict] | dict]:
     """Returns (key, list-of-invoice-dicts) on success - usually one dict,
     more if the page shows multiple invoices - or (key, {"error": ...}) on
     failure. Callers distinguish the two by type: a dict means failure, a
-    list means success (even an empty one, if extraction somehow yields no
-    invoices)."""
+    list means success (even an empty one)."""
     key = f"{os.path.basename(pdf_path)}#page{page_num}"
     try:
-        return key, extract_receipt_with_retry(image_bytes)
+        return key, extract_invoices_with_retry(page_bytes)
     except Exception as e:
         # logger.exception (not .error) so the full traceback lands in
         # process.log, not just the message - needed to debug anything
@@ -704,12 +870,12 @@ def main():
     pages = []
     for pdf_path in glob.glob(os.path.join(INVOICE_DIR, '*.pdf')):
         try:
-            for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
-                pages.append((pdf_path, page_num, image_bytes))
+            for page_num, page_bytes in enumerate(split_pdf_pages(pdf_path), start=1):
+                pages.append((pdf_path, page_num, page_bytes))
         except Exception:
             # A corrupt/unreadable PDF shouldn't take the whole batch down;
             # log it and keep going with the rest of the files.
-            logger.exception(f"failed to render {os.path.basename(pdf_path)}")
+            logger.exception(f"failed to split {os.path.basename(pdf_path)}")
 
     results = []
     # ThreadPoolExecutor.map yields results in the same order as `pages`
@@ -740,7 +906,6 @@ def main():
         raise
 
     print(json.dumps(output, indent=2, ensure_ascii=False))
-    cleanup_old_output()
 
 
 if __name__ == '__main__':
