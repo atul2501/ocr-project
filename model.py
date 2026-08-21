@@ -111,18 +111,7 @@ def extract_receipt(image) -> list[dict]:
             format='json',
             think=False,  
             options={'temperature': 0},
-                                          # not creative writing - also cuts
-                                          # down on the malformed-JSON retries
-                                          # seen in process.log, each of which
-                                          # costs a full extra call
-            keep_alive='30m',  # keep the model loaded on the server between
-                                # requests instead of the (short) default -
-                                # process.log shows real gaps of 5-12+
-                                # minutes between batches during normal use,
-                                # long enough for a shared/free-tier host to
-                                # unload an idle model and pay a reload cost
-                                # on the next request ("first time it took
-                                # 1 min" is the signature of exactly this)
+            keep_alive='30m',
         )
     except ResponseError as e:
         if e.status_code == 429 and "weekly usage limit" in e.error.lower():
@@ -388,16 +377,8 @@ class Invoice:
         )
 
         if total_tax == 0 and gross_total:
-            # No GST is charged on this invoice, so the taxable value is by
-            # definition the same as the total - trust the printed total
-            # over TAX.TAXABLE_AMOUNT, which the model sometimes fills with
-            # a single line item's value instead of a real taxable-amount
-            # field when the document prints no such field at all.
             base_value = gross_total
         else:
-            # Some invoices never print a "Taxable Amount"/"Subtotal" line -
-            # fall back through the duplicate AMOUNTS field, then to the sum
-            # of the line items, rather than reporting 0.0.
             base_value_raw = _first_value(
                 tax.get("TAXABLE_AMOUNT"),
                 amounts.get("TAXABLE_AMOUNT"),
@@ -442,26 +423,10 @@ class Invoice:
 
     @staticmethod
     def _build_item_list(data: dict) -> list["InvoiceItem"]:
-        """ITEM_LIST is built only from the "ITEMS" array - the actual
-        goods/service lines being billed (e.g. the freight/transportation
-        charge itself on a GTA bill). Named add-on charges are appended to
-        ITEM_LIST separately, as their own rows (see _build_charge_items) -
-        the prompt asks the model to route these into ADDITIONAL_CHARGES
-        specifically so they never land in ITEMS to begin with, and are
-        added back in as ITEM_LIST rows afterwards rather than being read
-        from ITEMS here."""
         items = [InvoiceItem.from_dict(item) for item in data.get("ITEMS", [])]
-        # The model occasionally echoes the schema's example ITEMS entry
-        # (an all-blank template row, shown to illustrate the shape) as a
-        # literal extra item alongside the real ones it found - drop any
-        # item that carries no actual data, regardless of why it showed up,
-        # rather than relying on a prompt instruction alone to prevent it.
         return [item for item in items if not _is_blank_value(asdict(item))]
 
     def to_dict(self) -> dict:
-        """Every field is always present - SAP expects a fixed set of keys
-        on every record, so missing text stays "" and missing numbers stay
-        0 rather than being dropped."""
         return asdict(self)
 
     def to_json(self, **kwargs) -> str:
@@ -469,74 +434,10 @@ class Invoice:
 
 
 def is_blank_invoice(invoice: Invoice) -> bool:
-    """True if none of the SAP-mapped fields carry a real value - the
-    is_blank_result() check runs on the raw ~150-field extraction schema and
-    can miss a page where the model fills in some unrelated field (e.g.
-    METADATA.LANGUAGE, a DELIVERY date) while every field Invoice.from_dict()
-    actually reads stays empty, producing a blank-but-not-flagged row here."""
     return _is_blank_value(invoice.to_dict())
 
 
 def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
-    """Turn a flat list of (source_id, extracted_dict) pairs into one Invoice
-    per distinct INVOICE_NUMBER - pages that share an invoice number (e.g. a
-    multi-page invoice) are merged into a single Invoice with combined
-    ITEM_LIST; distinct invoice numbers each get their own Invoice. A single
-    page can contribute more than one entry here (extract_receipt() returns
-    one dict per invoice it finds on that page), which this function doesn't
-    need to treat specially - each entry is just another item in the list.
-
-    source_id identifies the originating PDF (e.g. its basename) and exists
-    to resolve pages that never print their own invoice number - such as a
-    tooling/annexure page appended after the main Tax Invoice page, which
-    would otherwise become its own orphaned "__unknown_i" Invoice missing
-    every header field (customer GSTIN, dates, PO number, ...). Any page
-    with a blank INVOICE_NUMBER is folded into whichever invoice number was
-    found elsewhere in the same source_id, resolved up front in a first
-    pass so this works regardless of the order pages complete in (page
-    processing runs concurrently, so a blank-numbered page can finish
-    before the page carrying the real invoice number). Caveat: if a single
-    source_id genuinely contains two or more distinct real invoices (not
-    just one invoice plus its own blank-numbered annexure), a blank-numbered
-    page from that source could be folded into the wrong one of them, since
-    this fallback has no way to tell which invoice an unlabeled page belongs
-    to beyond "first one found for this source" - a rare case, and no worse
-    than leaving it an unmerged orphan.
-
-    Some documents get scanned/photographed as more than one page for the
-    same invoice number - e.g. both the government e-Invoice/IRP printout
-    and the supplier's full letterhead Tax Invoice for the same sale - each
-    showing the identical line items. DESCRIPTION is the field most likely
-    to come back slightly different between two OCR passes of the same
-    text (a misread digit, extra whitespace), so a goods/service item (from
-    ITEMS) is fingerprinted by its numeric/code fields only (HSN, QTY,
-    UNIT_PRICE, AMOUNT, VEHICLE_NUMBER) and an incoming item whose
-    fingerprint repeats one already recorded for that invoice number is
-    skipped - those fields are printed numbers/codes, not free text, and
-    are far more likely to OCR identically across two scans of the same
-    line. VEHICLE_NUMBER also guards the fleet-owner bill case where
-    several rows share identical blank HSN/QTY/UNIT_PRICE and only differ
-    by vehicle and amount. A genuinely distinct item with a coincidentally
-    identical HSN/qty/price/amount/vehicle combination is rare enough to
-    accept the risk, same tradeoff already made for the LOGISTICS/
-    ADDITIONAL_CHARGES dedup above. See _item_fingerprint() for the exact
-    tuple used, including the DESCRIPTION-inclusive variant for
-    code-generated charge rows.
-
-    The named logistics/freight charges (weighment, parking, ...) are now
-    ITEM_LIST rows rather than header scalars, so they need no special merge
-    handling here either - they go through the same item fingerprint dedup
-    as any other ITEM_LIST row above (_item_fingerprint), which includes
-    DESCRIPTION for these specific rows so that two different charge types
-    sharing the same amount don't collide.
-
-    A final pass then folds together any two invoices that share a
-    source_id and have byte-identical BASE_VALUE and GROSS_TOTAL - see
-    _merge_duplicate_totals() for why this is a reliable signal that the
-    prompt-level "don't confuse invoice number with an internal reference
-    number" instruction didn't catch (e.g. a vendor's real Tax Invoice
-    Number on one page vs. a Billing No./voucher number describing the same
-    sale on a companion accounting page)."""
     invoice_number_by_source: dict[str, str] = {}
     for source_id, page in page_results:
         number = page.get("DOCUMENT", {}).get("INVOICE_NUMBER", "")
@@ -553,26 +454,11 @@ def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
         source_ids_by_number.setdefault(key, set()).add(source_id)
         if key in invoices_by_number:
             existing = invoices_by_number[key]
-            # Pages for the same invoice can finish in any order (page
-            # processing runs concurrently), so whichever page happened to
-            # be seen first may be the one with blank header fields (e.g.
-            # an annexure page with no customer GSTIN of its own) - backfill
-            # any still-blank header field on `existing` from this page
-            # rather than assuming the first-seen page has the real data.
             for f in fields(Invoice):
                 if f.name == "ITEM_LIST":
                     continue
                 if getattr(existing, f.name) in ("", 0.0) and getattr(invoice, f.name) not in ("", 0.0):
                     setattr(existing, f.name, getattr(invoice, f.name))
-            # Check every item in this incoming page against `seen` as it
-            # stood *before* this page started merging, then fold in this
-            # page's own fingerprints only once the whole page is done -
-            # otherwise two genuinely distinct rows on the same page that
-            # happen to share identical numbers (e.g. a "Type A" and "Type
-            # B" tool set both priced/quantified the same) would collide
-            # with each other and the second gets wrongly dropped as a
-            # same-page "duplicate", when the fingerprint dedup is only
-            # meant to catch a whole page re-scanned twice.
             seen = seen_items_by_number[key]
             incoming_fingerprints = set()
             for item in invoice.ITEM_LIST:
@@ -592,22 +478,6 @@ def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
 
 
 def _merge_duplicate_totals(invoices: list[Invoice], source_ids: list[set[str]]) -> list[Invoice]:
-    """Fold together invoices that share a source PDF and have byte-identical
-    BASE_VALUE and GROSS_TOTAL - two genuinely different invoices in the same
-    PDF would not coincidentally match both totals to the cent, so a match
-    here means the same underlying transaction was extracted twice under two
-    different "invoice number" values (e.g. the vendor's real Tax Invoice
-    Number on one page, and an internal Billing No./voucher number on a
-    companion accounting page describing the same sale - a case the prompt
-    asks the model to avoid, but can't guarantee against every time).
-
-    Keeps whichever copy has more populated header fields (a proxy for which
-    extraction is more reliable - in practice the wrong copy tends to be
-    missing fields like IRN_NO/CUSTOMER_GST_NO, or to have VENDOR_GST_NO and
-    CUSTOMER_GST_NO swapped), backfilling any field still blank on the kept
-    copy from the discarded one. The discarded copy's ITEM_LIST is dropped
-    entirely rather than merged in - its items are near-certainly the same
-    line items already present on the kept copy under its own extraction."""
     def populated_count(inv: Invoice) -> int:
         return sum(
             1 for f in fields(Invoice)
@@ -644,18 +514,10 @@ def _merge_duplicate_totals(invoices: list[Invoice], source_ids: list[set[str]])
 
 
 def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str, list[dict] | dict]:
-    """Returns (key, list-of-invoice-dicts) on success - usually one dict,
-    more if the page shows multiple invoices - or (key, {"error": ...}) on
-    failure. Callers distinguish the two by type: a dict means failure, a
-    list means success (even an empty one, if extraction somehow yields no
-    invoices)."""
     key = f"{os.path.basename(pdf_path)}#page{page_num}"
     try:
         return key, extract_receipt_with_retry(image_bytes)
     except Exception as e:
-        # logger.exception (not .error) so the full traceback lands in
-        # process.log, not just the message - needed to debug anything
-        # unexpected later, not just the known retryable cases above.
         logger.exception(f"failed: {key}")
         return key, {"error": f"{type(e).__name__}: {e}"}
 
@@ -670,16 +532,9 @@ def main():
                     continue
                 pages.append((pdf_path, page_num, image_bytes))
         except Exception:
-            # A corrupt/unreadable PDF shouldn't take the whole batch down;
-            # log it and keep going with the rest of the files.
             logger.exception(f"failed to render {os.path.basename(pdf_path)}")
 
     results = []
-    # ThreadPoolExecutor.map yields results in the same order as `pages`
-    # (despite running concurrently), so zipping the two together safely
-    # recovers which source PDF each result came from - needed by
-    # group_into_invoices() to fold blank-invoice-number pages into the
-    # right invoice.
     for (pdf_path, _, _), (key, result) in zip(pages, executor.map(lambda args: process_page(*args), pages)):
         if isinstance(result, dict):  # process_page's {"error": ...} sentinel
             logger.info(f"skipped (failed): {key}")
@@ -709,8 +564,5 @@ if __name__ == '__main__':
     try:
         main()
     except Exception:
-        # Catch-all so any crash (bad INVOICE_DIR, disk full, etc.) is
-        # recorded in process.log with a full traceback, not just printed
-        # to the console and lost.
         logger.exception("main() crashed")
         raise
