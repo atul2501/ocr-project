@@ -1,499 +1,549 @@
-PROMPTS = """
-You are a professional Invoice OCR and Document Data Extraction system for
+import json
+
+# ChatPDF caps every chat message (and its response) at ~2500 tokens. The
+# full ~150-field extraction schema doesn't fit in a single round trip - the
+# response gets silently truncated mid-JSON before finishing - so the schema
+# is split into chunks sent as separate chats/message calls against the same
+# uploaded PDF, then merged back together (see model.py). The fields
+# themselves, and the final merged JSON shape, are unchanged - only how many
+# API calls it takes to fill them in.
+
+# A lightweight, separate scan (see model.py: _recall_check) that asks only
+# for a bare list of invoice numbers/GSTINs anywhere in the document, not a
+# full extraction - a long bundled PDF (a main invoice plus several
+# supporting pages, one of which happens to be a second, genuinely separate
+# invoice from a different vendor) has been observed to make chunk 0's own
+# full extraction miss that second invoice as its own array entry, even
+# with an explicit "check every page" instruction added directly to chunk
+# 0. A narrower, single-purpose question recalls it far more reliably than
+# asking for full multi-section extraction and complete invoice enumeration
+# in the same pass. Any invoice number this recall turns up that isn't
+# already in chunk 0's results triggers a second, targeted extraction pass
+# scoped to just that invoice (see model.py: _extract_targeted_invoice).
+RECALL_CHECK_PROMPT = """You are auditing this document for completeness, not extracting data yet.
+
+List EVERY distinct invoice or tax invoice anywhere in this document, no
+matter how minor or how deep in the file - including one issued by a
+vendor OTHER than the main/primary one (e.g. a sub-contractor's own bill
+to the primary vendor, bundled in among supporting pages). Check every
+page; do not stop after finding the first or most prominent invoice.
+
+Return ONLY a JSON array, one object per distinct invoice found, in this
+exact structure - use the invoice number and GSTIN exactly as printed on
+that invoice's own page:
+[{"INVOICE_NUMBER": "", "SUPPLIER_GSTIN": "", "SUPPLIER_NAME": ""}]
+
+If the document contains no invoices at all, return an empty array [].
+Do not return markdown, explanations or any text outside the JSON array."""
+
+_COMMON_HEADER = """You are a professional Invoice OCR and Document Data Extraction system for
 SAP-based Accounts Payable, Finance, Procurement, GST and Logistics processing
 in India.
 
-Analyze the complete invoice/document image carefully. Read printed text,
-tables, small text, GST details, tax details, handwritten annotations,
-stamps, signatures, QR/barcode information and logistics information.
+Analyze the complete uploaded document carefully, across every page it
+contains. Read printed text, tables, small text, GST details, tax details,
+handwritten annotations, stamps, signatures, QR/barcode information and
+logistics information.
 
-Return a JSON array containing one object per distinct invoice/PO found on
-this page. Almost every page shows exactly one invoice, so the array will
-almost always contain exactly one object - but if this single page image
-genuinely shows more than one separate invoice (e.g. two small bills
-photographed together on one sheet), return one object per invoice, each
-filled in independently. Do not merge multiple invoices into one object,
-and do not drop any of them.
+Return a JSON array containing one object per distinct invoice/PO found
+anywhere in this document. Most uploaded files contain exactly one invoice,
+so the array will usually contain exactly one object - but if this document
+genuinely contains more than one separate invoice (e.g. several bills
+bundled into one PDF, or a multi-page invoice followed by a second,
+unrelated invoice), return one object per invoice, each filled in
+independently from only that invoice's own page(s). Check every page, not
+just the first few - a long bundled PDF can carry a second, genuinely
+separate invoice from a different vendor (e.g. a sub-contractor's own bill
+to the primary vendor) buried among supporting pages later in the file; do
+not stop scanning after finding the first invoice. Do not merge multiple
+invoices into one object, and do not drop any of them.
 Do not return markdown, explanations, comments or any text outside JSON.
 
-IMPORTANT EXTRACTION RULES:
-- Do not guess or invent any value.
-- Every value you return - every field, every ITEMS row, every reference
-  number or date - must correspond to text you can actually see printed or
-  written on THIS page image. Never fill a field using outside knowledge,
-  a typical/expected value for this kind of document, or something you
-  recall from a different page or document. If you cannot point to where
-  on this page a value is printed, leave the field "" instead of returning
-  it.
+GENERAL RULES:
+- Do not guess or invent any value - every value must correspond to text
+  visible in THIS document. If you can't point to where it's printed, leave
+  the field "" instead.
 - If a value is missing, unreadable or uncertain, return an empty string "".
 - Preserve values exactly as printed wherever possible.
 - Do not calculate missing tax, totals or amounts.
-- Do not confuse invoice number with PO number, LR number, delivery order,
-  challan number, sales order or other reference numbers.
-- "PURCHASE_ORDER.PO_NUMBER" is the customer's own order/purchase
-  reference that the vendor is billing against - fill it whenever the
-  invoice header cites one, regardless of the exact label used ("PO No.",
-  "Order Ref", "Ref. No.", "Customer Ref", "Your Order No.", "P.O. No."),
-  not only when the words "Purchase Order" are literally printed. These
-  numbers are very often in the buyer's own ERP format (e.g. a 10-digit
-  SAP PO number like "4300021506", sometimes followed by a revision and
-  date such as "/ R-01 DT.06-08-2025" - keep that suffix as part of the
-  value exactly as printed). If the invoice cites two distinct such
-  numbers under two different labels (e.g. both an "Order Ref" and a
-  separate "Customer Ref"), put the customer's own PO-style reference
-  (the one in the buyer's ERP number format) in "PO_NUMBER" and the other
-  one in "PURCHASE_ORDER_REFERENCE".
-- INVOICE_NUMBER is specifically the number the vendor's own Tax Invoice
-  labels as its invoice/bill number (e.g. "Invoice No.", "Tax Invoice No.",
-  "Bill No." printed on the vendor's letterhead invoice itself) - never a
-  "Billing No.", voucher number, ERP/accounting document number, or other
-  internal reference number that appears on a companion page (e.g. a
-  goods-receipt note, ledger extract, or accounts-posting slip) describing
-  the same vendor, items and amounts as an invoice you've already seen. If
-  a page shows the same transaction (same vendor, same goods, same
-  amounts) as another page but under a different internal reference number
-  rather than the vendor's own printed invoice number, it is the same
-  invoice, not a new one - leave INVOICE_NUMBER "" on that page rather than
-  filling it with the internal reference number.
+- Keep dates in YYYY-MM-DD format when unambiguous.
+- Every amount/quantity/rate field must be a plain numeric string only -
+  digits, at most one decimal point, optional leading minus sign. No
+  currency symbols, thousands separators other than what's printed, or unit
+  suffixes (kg, pcs, %). If it can't be reduced to a clean number this way,
+  return "" rather than including the extra characters.
+- Read clear handwriting; do not guess unclear handwriting.
+- ALPHANUMERIC IDs - read each character individually (confusable glyphs:
+  0/O, 1/I/l, 5/S, 8/B, 6/G, 2/Z, 9/g/q). GSTIN = 15 chars (2-digit state
+  code + 10-char PAN [5 letters/4 digits/1 letter] + 1 digit + "Z" + 1
+  checksum char). PAN = 10 chars (5 letters/4 digits/1 letter, e.g.
+  AAAAA9999A). GST_COMPLIANCE.IRN = 64 lowercase hex chars (0-9, a-f only).
+  Re-check before returning; if still uncertain after re-reading, return ""
+  rather than a guess.
+
+DOCUMENT TYPE FILTER - governs every field of every invoice object you
+return, not only METADATA.IS_TARGET_DOCUMENT. Apply per invoice: a document
+can mix a genuine Tax Invoice page with unrelated supporting pages
+(annexures, challans, e-way bills), and may contain more than one invoice:
+- This system only extracts data from Tax Invoices (GST tax invoices) and
+  Purchase Orders (PO).
+- A page counts as a Tax Invoice regardless of its literal header wording
+  as long as it has ALL of: the issuing party's GSTIN, its own invoice
+  number/reference, identification of who it is billed to, one or more
+  itemized charges/quantities/amounts, and a total amount payable. This
+  includes GTA/transporter/logistics documents headed just "BILL" or
+  "FREIGHT BILL" - treat these as target documents too. Many are issued
+  under GST reverse charge, so no CGST/SGST/IGST amount appears on the page
+  itself - that alone does not disqualify it, as long as it still has its
+  own invoice number and identifies the customer.
+- A page with no invoice number of its own and no customer/buyer
+  identification of its own is NOT a Tax Invoice, even if it shows a
+  vendor/issuer GSTIN and a table of itemized costs with a subtotal/total
+  (e.g. a tooling/parts/annexure cost breakdown page from later in the same
+  invoice booklet). Do not return a separate invoice object for a page like
+  this - it isn't its own document. If the whole uploaded file contains no
+  page that qualifies as a Tax Invoice or PO, return a single object with
+  "METADATA.IS_TARGET_DOCUMENT" set to false and every other field empty.
+- If the whole document is some other kind of document (delivery challan,
+  LR/weighment/transporter receipt with no amount payable, warehouse/
+  storage paperwork, packing list, e-way bill copy, bank statement, or
+  anything else that is not a Tax Invoice or PO by the definition above),
+  return a single object with "METADATA.IS_TARGET_DOCUMENT" set to false,
+  and every other field as an empty string "" - do not attempt to extract
+  data from a non-target document.
+- Exception: an e-Way Bill's "IRN Details" Ack Date (not its own generation
+  date) belongs to the Tax Invoice it references under "Document No"/"Tax
+  Invoice" - fold it into that invoice's object if present in this
+  document. Only give the e-Way Bill page its own object
+  (IS_TARGET_DOCUMENT true) if that Tax Invoice isn't otherwise present,
+  filling ONLY "GST_COMPLIANCE.IRN", "GST_COMPLIANCE.ACKNOWLEDGEMENT_NUMBER",
+  "GST_COMPLIANCE.ACKNOWLEDGEMENT_DATE" and "DOCUMENT.INVOICE_NUMBER" -
+  leave everything else blank.
+- If a page IS a Tax Invoice (by the definition above) or a Purchase Order,
+  set "METADATA.IS_TARGET_DOCUMENT" to true on its object and extract all
+  fields normally.
+"""
+
+_CHUNK_A1_RULES = """
+RULES FOR THIS PORTION OF THE SCHEMA (parties and references):
 - Distinguish Supplier/Vendor, Customer/Buyer, Bill-To and Ship-To.
+- "PURCHASE_ORDER.PO_NUMBER" is the customer's own order/purchase reference
+  that the vendor is billing against - fill it whenever the invoice header
+  cites one, regardless of the exact label used ("PO No.", "Order Ref",
+  "Ref. No.", "Customer Ref", "Your Order No.", "P.O. No."). These numbers
+  are very often in the buyer's own ERP format (e.g. a 10-digit SAP PO
+  number like "4300021506", sometimes with a revision/date suffix such as
+  "/ R-01 DT.06-08-2025" - keep that suffix as part of the value). If the
+  invoice cites two distinct such numbers under two different labels, put
+  the customer's own PO-style reference (the buyer's ERP number format) in
+  "PO_NUMBER" and the other in "PURCHASE_ORDER_REFERENCE".
+- INVOICE_NUMBER is specifically the number the vendor's own Tax Invoice
+  labels as its invoice/bill number - never a "Billing No.", voucher
+  number, ERP/accounting document number, or other internal reference
+  number that appears on a companion page (goods-receipt note, ledger
+  extract, accounts-posting slip) describing the same vendor, items and
+  amounts as an invoice you've already seen. Leave INVOICE_NUMBER "" on
+  such a page rather than filling it with the internal reference number.
 - "PLACE_OF_SUPPLY" is a specific statutory GST field - fill it only from
   text actually labelled "Place of Supply" (or an e-invoice's IRN/QR
   compliance block that states it). Never fill it from a route/destination
-  field such as "To", "To Area", "Ship To", "Delivery Location" or the
-  destination named in a freight description, even though those may
-  coincidentally name a place - a transporter's "To Area: Khopoli" is where
-  the goods are going, not a Place-of-Supply declaration. Do not infer it
-  from an address block's city/state either. If the page never actually
-  labels a value as Place of Supply, leave "PLACE_OF_SUPPLY" "" rather than
-  substituting a nearby location.
-- Extract every individual invoice line item and every additional charge.
-  If there are multiple line items, include one entry per item in the
-  "ITEMS" array - do not collapse multiple items into a single entry.
-- Some transporter/logistics bills list several separate trips as rows in
-  one table (e.g. a fleet-owner's bill with one row per vehicle, each row
-  showing its own LR No., Vehicle No., date and Amount for a single trip).
-  Treat each such row as its own entry in "ITEMS", and fill that row's own
-  "LR_NUMBER" and "VEHICLE_NUMBER" from that row specifically - do not
-  leave them blank because a vehicle/LR number for a different row already
-  exists elsewhere on the page, and do not merge these rows into one entry
-  just because they share the same From/To/product description.
-- "ITEMS" is only for the actual goods or service being billed - e.g. the
-  product rows on a sales invoice, or the freight/transportation charge
-  itself on a GTA/transporter bill (that charge is the primary billed
-  service on such a bill, so it belongs in ITEMS). Any OTHER charge that
-  rides alongside that billed item or shipment, rather than being the item
-  itself, belongs in "ADDITIONAL_CHARGES", never in "ITEMS", even when it
-  is printed in the same block or table as the main item, uses its own HSN/
-  SAC code, or is billed on the same invoice as if it were another line.
-  This is a general rule, not just the specific examples below - use the
-  same judgment for any charge shaped like these even if it isn't literally
-  one of them:
-  - Transport/logistics add-ons: weighment charges, parking charges,
-    loading/unloading charges, detention charges, demurrage charges,
-    handling charges.
-  - Freight-forwarding/export service fees: a service or agency charge for
-    exporting, forwarding, clearing or handling a consignment - printed as
-    a row separate from the goods themselves, usually under a SAC code (SAC
-    codes start 99, e.g. 996519) rather than the goods' own HSN code. A row
-    like "Consignment exported in above item" describes the export service
-    itself, not a second unit of the goods above it.
-  - Any other fee that is clearly a service/charge on top of the shipment
-    or sale (packing, insurance, commission, agency fees) rather than a
-    distinct product or the primary billed service.
-  The test is always: is this its own distinct product/primary service, or
-  is it a fee that exists because of the item/shipment above it? Only the
-  former belongs in ITEMS.
-- LINE_TOTAL on each item is that line's own printed amount (its row in the
-  items table, e.g. its Amount/Taxable Value column) - it is NEVER the
-  invoice's overall Total/Grand Total printed at the bottom of the page.
-  This matters most on invoices with only one line item: the bottom "Total"
-  row includes tax and applies to the whole invoice, not to that single
-  line, so do not copy it into LINE_TOTAL.
-- Never add a subtotal, sub-total or "Total <label>" row (e.g. "Total
-  Tooling cost (B)", "Total (B+C)", "Sub Total", "Grand Total") to the
-  "ITEMS" array as if it were its own purchasable line item - these rows
-  summarize the items already listed above them, so including them as a
-  separate entry double-counts that value. Skip these rows entirely; only
-  the individual priced rows they summarize belong in "ITEMS".
-- A "Weight" column (e.g. a transporter bill's per-row weight in kg/tons)
-  is never the same thing as "QUANTITY" - do not put a weight value into
-  QUANTITY just because it is the only per-row number on that line besides
-  the amount. Put it in that item's "WEIGHT" field instead. If the table
-  has no column actually labelled Qty/Quantity/Nos/Units for that row,
-  leave QUANTITY "" rather than substituting weight, count of vehicles, or
-  any other nearby number. Fill "WEIGHT_UNIT" with the unit exactly as
-  printed near that weight value or in the column header (e.g. "Metric
-  Tons", "MT", "Kg", "Tons") - never abbreviate or substitute a unit letter
-  that isn't itself printed on the page (do not write "T" for a value
-  labelled "Metric Tons" unless "T" is what's actually printed).
-- Extract GST components separately: CGST, SGST, IGST, UTGST and Cess.
-- Extract HSN/SAC codes whenever visible.
-- Extract Indian GSTIN, PAN, CIN and other statutory identifiers when visible.
-- Read clearly visible handwritten information, but do not guess unclear handwriting.
-- Keep dates in YYYY-MM-DD format when unambiguous.
-- Use numeric values for quantities, rates, taxes and amounts when clearly readable.
-- Every amount/quantity/rate field (QUANTITY, WEIGHT, UNIT_PRICE, RATE,
-  LINE_TOTAL, AMOUNT, TOTAL_AMOUNT, every *_AMOUNT under TAX, and every
-  field under AMOUNTS) must be a plain numeric string only - digits, at most one decimal
-  point, optional leading minus sign. Do not include currency symbols (Rs,
-  INR, $, or a rupee sign), thousands separators other than what's printed,
-  unit suffixes (kg, pcs, %), or any other character. If the printed value
-  cannot be reduced to a clean number this way, return an empty string ""
-  rather than including the extra characters.
-- Use an empty string "" when the document does not contain a particular field.
-
-DOCUMENT TYPE FILTER:
-- This system only extracts data from Tax Invoices (GST tax invoices) and
-  Purchase Orders (PO).
-- First determine what kind of document the image actually is.
-- A document counts as a Tax Invoice regardless of its literal header
-  wording as long as it has ALL of the following: the issuing party's GSTIN,
-  its own invoice number or reference, identification of who it is billed
-  to (a customer/buyer name, address or GSTIN), one or more itemized
-  charges/quantities/amounts, and a total amount payable. This includes
-  GTA/transporter/logistics documents headed just "BILL" or "FREIGHT BILL"
-  instead of "TAX INVOICE" - treat these as target documents too, since
-  they are genuine invoices for GST purposes even if the header doesn't
-  literally say so. Many such bills are issued under GST reverse charge, so
-  no CGST/SGST/IGST amount appears on the page itself - that alone does not
-  disqualify it, as long as it still has its own invoice number and
-  identifies the customer.
-- A page with no invoice number of its own and no customer/buyer
-  identification of its own is NOT a Tax Invoice, even if it shows a
-  vendor/issuer GSTIN and a table of itemized costs with a subtotal/total.
-  This includes a tooling/parts/annexure cost breakdown printed on a later
-  page of the same invoice booklet (e.g. a page headed "Tooling of ..."
-  listing individual tool/part costs with a "Total Tooling cost" line, but
-  no invoice number, no buyer name/GSTIN, and no GST tax charged on it) -
-  such a page is a reference/supporting sheet, not itself a separate
-  taxable document, no matter how many real prices it shows. Set
-  "METADATA.IS_TARGET_DOCUMENT" to false for a page like this and leave
-  every other field empty. This is different from the GTA/reverse-charge
-  freight bills above, which always carry their own invoice number and
-  identify the customer even when no tax amount is shown - it is
-  specifically the missing invoice number AND missing customer
-  identification together, not the absence of a tax amount, that
-  disqualifies a page.
-- If it is a Tax Invoice (by the definition above) or a Purchase Order, set
-  "METADATA.IS_TARGET_DOCUMENT" to true and extract all fields normally as
-  instructed above.
-- If it is any other kind of document (e.g. a delivery challan, LR/weighment/
-  transporter receipt with no amount payable, warehouse or storage
-  paperwork, packing list, e-way bill copy, bank statement, or anything else
-  that is not a Tax Invoice or PO by the definition above), set
-  "METADATA.IS_TARGET_DOCUMENT" to false, and leave every other field as an
-  empty string "" - do not attempt to extract data from non-target documents.
-- Exception: an e-Way Bill copy page that shows an "IRN Details" block with
-  an Ack Date (the e-invoice acknowledgement date - not the e-Way Bill's own
-  generation date) is still not a Tax Invoice, but the Ack Date it prints
-  belongs to the Tax Invoice referenced under "Document No"/"Tax Invoice"
-  on that same e-Way Bill, and that invoice's own page very often never
-  prints this date itself. For an e-Way Bill page like this only, set
-  "METADATA.IS_TARGET_DOCUMENT" to true and fill ONLY "GST_COMPLIANCE.IRN",
-  "GST_COMPLIANCE.ACKNOWLEDGEMENT_NUMBER", "GST_COMPLIANCE.ACKNOWLEDGEMENT_DATE"
-  and "DOCUMENT.INVOICE_NUMBER" (the invoice number the e-Way Bill itself
-  references) - leave every other field blank, since none of the e-Way
-  Bill's other content (vehicle, transporter, weight, etc.) should be
-  extracted.
-
-ALPHANUMERIC ID FIELDS - read each character individually, do not skim:
-- Commonly confused glyphs: 0 vs O, 1 vs I vs l, 5 vs S, 8 vs B, 6 vs G, 2 vs Z, 9 vs g/q.
-  Look at the surrounding characters and the field's expected format below to decide
-  which one is actually printed.
-- GSTIN: exactly 15 characters - 2 digits (state code), 10 characters (PAN: 5 letters,
-  4 digits, 1 letter), 1 digit (entity code), the letter "Z", 1 alphanumeric checksum.
-  If the extracted value does not fit this pattern, re-examine the image before
-  returning it; if still uncertain, return an empty string "" rather than a guess.
-- PAN: exactly 10 characters - 5 letters, 4 digits, 1 letter (e.g. AAAAA9999A).
-- GST_COMPLIANCE.IRN: exactly 64 lowercase hexadecimal characters (0-9, a-f
-  only - no uppercase, no spaces, no dashes). This is the e-invoice Invoice
-  Reference Number printed near the IRN/QR code block. Count the characters
-  and re-check every character against a hex-digit ambiguity (e.g. 3 vs 5,
-  a vs d, 8 vs B) before returning it; if the value does not have exactly
-  64 hex characters after careful re-reading, return an empty string ""
-  rather than a guess.
-- Phone: digits only (plus an optional leading + and country code); re-check any
-  digit that could be misread as a letter (e.g. B/8, S/5, O/0, G/6).
-- Email: must match name@domain.tld with no spaces; re-check characters that could
-  be letter/digit confusions before returning.
-- If any of these fields fail their expected format after careful re-reading,
-  return an empty string "" instead of an incorrect value.
+  field such as "To", "Ship To" or a freight description's destination,
+  and never infer it from an address block's city/state. If never actually
+  labelled, leave "" rather than substituting a nearby location.
+- Use an empty string "" when the document does not contain a field.
 
 Return exactly this JSON structure - one such object per invoice found on
-the page, wrapped in an array as described above:
+the page, wrapped in an array:
 
-[{
-  "DOCUMENT": {
-    "DOCUMENT_TYPE": "",
-    "DOCUMENT_TITLE": "",
-    "INVOICE_NUMBER": "",
-    "INVOICE_DATE": "",
-    "INVOICE_REFERENCE_NUMBER": "",
-    "ORIGINAL_INVOICE_NUMBER": "",
-    "REVISION_NUMBER": "",
-    "CURRENCY": "",
-    "PLACE_OF_SUPPLY": "",
-    "SUPPLY_TYPE": "",
-    "REVERSE_CHARGE": ""
-  },
-
-  "SUPPLIER": {
-    "NAME": "",
-    "LEGAL_NAME": "",
-    "TRADE_NAME": "",
-    "VENDOR_CODE": "",
-    "ADDRESS": "",
-    "CITY": "",
-    "STATE": "",
-    "STATE_CODE": "",
-    "COUNTRY": "",
-    "PINCODE": "",
-    "GSTIN": "",
-    "PAN": "",
-    "CIN": "",
-    "TAN": "",
-    "EMAIL": "",
-    "PHONE": "",
-    "WEBSITE": ""
-  },
-
-  "CUSTOMER": {
-    "NAME": "",
-    "LEGAL_NAME": "",
-    "CUSTOMER_CODE": "",
-    "ADDRESS": "",
-    "CITY": "",
-    "STATE": "",
-    "STATE_CODE": "",
-    "COUNTRY": "",
-    "PINCODE": "",
-    "GSTIN": "",
-    "PAN": "",
-    "EMAIL": "",
-    "PHONE": ""
-  },
-
-  "BILL_TO": {
-    "NAME": "",
-    "ADDRESS": "",
-    "CITY": "",
-    "STATE": "",
-    "STATE_CODE": "",
-    "PINCODE": "",
-    "GSTIN": "",
-    "PAN": ""
-  },
-
-  "SHIP_TO": {
-    "NAME": "",
-    "ADDRESS": "",
-    "CITY": "",
-    "STATE": "",
-    "STATE_CODE": "",
-    "PINCODE": "",
-    "GSTIN": "",
-    "PAN": ""
-  },
-
-  "PURCHASE_ORDER": {
-    "PO_NUMBER": "",
-    "PO_DATE": "",
-    "PURCHASE_ORDER_REFERENCE": "",
-    "PURCHASE_REQUISITION_NUMBER": "",
-    "CONTRACT_NUMBER": "",
-    "AGREEMENT_NUMBER": "",
-    "WORK_ORDER_NUMBER": ""
-  },
-
-  "DELIVERY": {
-    "DELIVERY_ORDER_NUMBER": "",
-    "DELIVERY_ORDER_DATE": "",
-    "DELIVERY_NOTE_NUMBER": "",
-    "DELIVERY_NOTE_DATE": "",
-    "CHALLAN_NUMBER": "",
-    "CHALLAN_DATE": "",
-    "DISPATCH_DATE": "",
-    "DELIVERY_DATE": "",
-    "EWAY_BILL_NUMBER": "",
-    "LR_NUMBER": "",
-    "LR_DATE": "",
-    "TRANSPORTER_NAME": "",
-    "VEHICLE_NUMBER": "",
-    "VEHICLE_TYPE": "",
-    "FROM_LOCATION": "",
-    "TO_LOCATION": "",
-    "PLACE_OF_DISPATCH": "",
-    "PLACE_OF_DELIVERY": ""
-  },
-
-  "ITEMS": [
-    {
-      "LINE_NUMBER": "",
-      "ITEM_CODE": "",
-      "MATERIAL_CODE": "",
-      "LR_NUMBER": "",
-      "VEHICLE_NUMBER": "",
-      "PRODUCT_NAME": "",
-      "DESCRIPTION": "",
-      "HSN_CODE": "",
-      "SAC_CODE": "",
-      "QUANTITY": "",
-      "UOM": "",
-      "WEIGHT": "",
-      "WEIGHT_UNIT": "",
-      "UNIT_PRICE": "",
-      "GROSS_AMOUNT": "",
-      "DISCOUNT": "",
-      "DISCOUNT_PERCENTAGE": "",
-      "TAXABLE_VALUE": "",
-      "GST_RATE": "",
-      "CGST_RATE": "",
-      "CGST_AMOUNT": "",
-      "SGST_RATE": "",
-      "SGST_AMOUNT": "",
-      "IGST_RATE": "",
-      "IGST_AMOUNT": "",
-      "UTGST_RATE": "",
-      "UTGST_AMOUNT": "",
-      "CESS_RATE": "",
-      "CESS_AMOUNT": "",
-      "OTHER_CHARGES": "",
-      "LINE_TOTAL": ""
-    }
-  ],
-
-  "ADDITIONAL_CHARGES": [
-    {
-      "DESCRIPTION": "",
-      "CHARGE_TYPE": "",
-      "QUANTITY": "",
-      "RATE": "",
-      "AMOUNT": "",
-      "TAXABLE_VALUE": "",
-      "GST_RATE": "",
-      "CGST_AMOUNT": "",
-      "SGST_AMOUNT": "",
-      "IGST_AMOUNT": "",
-      "TOTAL_AMOUNT": ""
-    }
-  ],
-
-  "TAX": {
-    "TAXABLE_AMOUNT": "",
-    "CGST_RATE": "",
-    "CGST_AMOUNT": "",
-    "SGST_RATE": "",
-    "SGST_AMOUNT": "",
-    "IGST_RATE": "",
-    "IGST_AMOUNT": "",
-    "UTGST_RATE": "",
-    "UTGST_AMOUNT": "",
-    "CESS_RATE": "",
-    "CESS_AMOUNT": "",
-    "OTHER_TAX": "",
-    "TOTAL_TAX": ""
-  },
-
-  "AMOUNTS": {
-    "SUBTOTAL": "",
-    "GROSS_AMOUNT": "",
-    "TOTAL_DISCOUNT": "",
-    "FREIGHT": "",
-    "TRANSPORTATION_CHARGES": "",
-    "PACKING_CHARGES": "",
-    "LOADING_CHARGES": "",
-    "UNLOADING_CHARGES": "",
-    "INSURANCE_CHARGES": "",
-    "HANDLING_CHARGES": "",
-    "OTHER_CHARGES": "",
-    "TAXABLE_AMOUNT": "",
-    "TOTAL_TAX": "",
-    "ROUND_OFF": "",
-    "ADVANCE_PAID": "",
-    "TOTAL_AMOUNT": "",
-    "AMOUNT_PAID": "",
-    "BALANCE_DUE": "",
-    "AMOUNT_IN_WORDS": ""
-  },
-
-  "PAYMENT": {
-    "PAYMENT_TERMS": "",
-    "DUE_DATE": "",
-    "CREDIT_PERIOD_DAYS": "",
-    "PAYMENT_METHOD": "",
-    "BANK_NAME": "",
-    "BANK_ACCOUNT_NUMBER": "",
-    "IFSC_CODE": "",
-    "UPI_ID": ""
-  },
-
-  "LOGISTICS": {
-    "VEHICLE_NUMBER": "",
-    "VEHICLE_TYPE": "",
-    "CONTAINER_NUMBER": "",
-    "CONTAINER_TYPE": "",
-    "CONTAINER_DETAILS": "",
-    "WEIGHT": "",
-    "WEIGHT_UNIT": "",
-    "FREIGHT_AMOUNT": "",
-    "WEIGHMENT_CHARGES": "",
-    "DETENTION_CHARGES": "",
-    "DEMURRAGE_CHARGES": "",
-    "PARKING_CHARGES": "",
-    "LOADING_CHARGES": "",
-    "UNLOADING_CHARGES": "",
-    "EMPTY_UNLOADING_CHARGES": ""
-  },
-
-  "GST_COMPLIANCE": {
-    "SUPPLIER_GSTIN": "",
-    "CUSTOMER_GSTIN": "",
-    "PLACE_OF_SUPPLY": "",
-    "PLACE_OF_SUPPLY_STATE_CODE": "",
-    "REVERSE_CHARGE": "",
-    "IRN": "",
-    "ACKNOWLEDGEMENT_NUMBER": "",
-    "ACKNOWLEDGEMENT_DATE": "",
-    "QR_CODE_DATA": "",
-    "EWAY_BILL_NUMBER": "",
-    "GST_TAXABLE_VALUE": "",
-    "CGST": "",
-    "SGST": "",
-    "IGST": "",
-    "UTGST": "",
-    "CESS": ""
-  },
-
-  "REFERENCES": {
-    "PO_NUMBERS": [],
-    "SALES_ORDER_NUMBERS": [],
-    "DELIVERY_ORDER_NUMBERS": [],
-    "DELIVERY_NOTE_NUMBERS": [],
-    "CHALLAN_NUMBERS": [],
-    "LR_NUMBERS": [],
-    "EWAY_BILL_NUMBERS": [],
-    "CONTAINER_NUMBERS": [],
-    "VEHICLE_NUMBERS": [],
-    "OTHER_REFERENCE_NUMBERS": []
-  },
-
-  "APPROVAL": {
-    "AUTHORIZED_SIGNATORY_NAME": "",
-    "RECEIVER_NAME": "",
-    "RECEIVER_SIGNATURE_PRESENT": "",
-    "SUPPLIER_SIGNATURE_PRESENT": "",
-    "COMPANY_STAMP_PRESENT": ""
-  },
-
-  "METADATA": {
-    "PAGE_TYPE": "",
-    "LANGUAGE": "",
-    "HANDWRITTEN_CONTENT_PRESENT": "",
-    "STAMP_PRESENT": "",
-    "SIGNATURE_PRESENT": "",
-    "QR_CODE_PRESENT": "",
-    "BARCODE_PRESENT": "",
-    "IS_TARGET_DOCUMENT": ""
-  }
-},...]
 """
+
+_CHUNK_A2_RULES = """
+RULES FOR THIS PORTION OF THE SCHEMA (line items and additional charges):
+- Extract every individual invoice line item and every additional charge -
+  one entry per item in "ITEMS", never collapsed.
+- Some transporter/logistics bills list several separate trips as rows in
+  one table, each with its own printed Amount (e.g. one row per vehicle,
+  each with its own LR No., Vehicle No., date and Amount) - treat each such
+  row as its own "ITEMS" entry with its own "LR_NUMBER"/"VEHICLE_NUMBER",
+  never blank because a value for a different row exists elsewhere, and
+  never merged just because rows share the same From/To/product
+  description. But if a single printed Amount instead covers two or more
+  reference numbers together (e.g. one Freight Amount cell against two
+  invoice/shipment/LR numbers listed under it), that is ONE row, not one
+  per reference number - do not duplicate the same Amount into multiple
+  ITEMS entries just because more than one reference number is printed
+  with it.
+- VEHICLE_NUMBER must be the full registration exactly as printed,
+  including its leading state-code letters (e.g. "MP 09 GG 6787", not
+  "09 GG 6787") - never drop that prefix.
+- "ITEMS" is only for the actual goods or service being billed (e.g. the
+  freight/transportation charge itself on a GTA/transporter bill). Any
+  OTHER charge riding alongside that item/shipment belongs in
+  "ADDITIONAL_CHARGES", never "ITEMS", even printed in the same block/table,
+  under its own HSN/SAC code, or billed as if it were another line:
+  weighment/parking/loading/unloading/detention/demurrage/handling charges,
+  freight-forwarding/export service fees (usually a SAC code starting 99,
+  e.g. 996519), packing, insurance, commission, agency fees. The test:
+  is this its own distinct product/primary service, or a fee that exists
+  because of the item/shipment above it? Only the former belongs in ITEMS.
+- LINE_TOTAL on each item is that line's own printed amount - NEVER the
+  invoice's overall Total/Grand Total. This matters most on invoices with
+  only one line item.
+- If this document also includes a separate E-Way Bill, delivery challan
+  or other supporting page for the same shipment, extract ITEMS (HSN,
+  QUANTITY, LINE_TOTAL, everything) only from the actual Tax Invoice
+  page's own items table - never substitute a quantity or amount from a
+  supporting page's own totals, even one describing the same goods (an
+  E-Way Bill's Taxable Amount is very often a different, partial figure,
+  e.g. for one truckload of a larger multi-vehicle shipment).
+- Never add a subtotal/Sub Total/Grand Total/"Total <label>" row to
+  "ITEMS" as if it were its own line item - skip these summary rows.
+- A "Weight" column is never the same as "QUANTITY" - put it in "WEIGHT"
+  instead. If no column is actually labelled Qty/Quantity/Nos/Units for
+  that row, leave QUANTITY "" rather than substituting weight or any other
+  nearby number. Fill "WEIGHT_UNIT" exactly as printed (e.g. "Metric Tons",
+  "MT", "Kg", "Tons") - never abbreviate or substitute a unit that isn't
+  itself printed.
+- Extract HSN/SAC codes whenever visible.
+- Use an empty string "" when the document does not contain a field.
+
+Return exactly this JSON structure - one such object per invoice found on
+the page, wrapped in an array:
+
+"""
+
+_CHUNK_B_RULES = """
+RULES FOR THIS PORTION OF THE SCHEMA (tax, amounts, payment, logistics,
+GST compliance, references, approval):
+- Extract GST components separately: CGST, SGST, IGST, UTGST and Cess.
+- Extract Indian GSTIN, PAN, CIN and other statutory identifiers when
+  visible.
+- LOGISTICS.VEHICLE_NUMBER must be the full registration exactly as
+  printed, including its leading state-code letters (e.g. "MP 09 GG 6787",
+  not "09 GG 6787") - never drop that prefix.
+- Use an empty string "" when the document does not contain a field.
+
+Return exactly this JSON structure - one such object per invoice found on
+the page, wrapped in an array:
+
+"""
+
+_CHUNK_A1_SCHEMA = {
+    "DOCUMENT": {
+        "DOCUMENT_TYPE": "",
+        "DOCUMENT_TITLE": "",
+        "INVOICE_NUMBER": "",
+        "INVOICE_DATE": "",
+        "INVOICE_REFERENCE_NUMBER": "",
+        "ORIGINAL_INVOICE_NUMBER": "",
+        "REVISION_NUMBER": "",
+        "CURRENCY": "",
+        "PLACE_OF_SUPPLY": "",
+        "SUPPLY_TYPE": "",
+        "REVERSE_CHARGE": "",
+    },
+    "SUPPLIER": {
+        "NAME": "",
+        "LEGAL_NAME": "",
+        "TRADE_NAME": "",
+        "VENDOR_CODE": "",
+        "ADDRESS": "",
+        "CITY": "",
+        "STATE": "",
+        "STATE_CODE": "",
+        "COUNTRY": "",
+        "PINCODE": "",
+        "GSTIN": "",
+        "PAN": "",
+        "CIN": "",
+        "TAN": "",
+        "EMAIL": "",
+        "PHONE": "",
+        "WEBSITE": "",
+    },
+    "CUSTOMER": {
+        "NAME": "",
+        "LEGAL_NAME": "",
+        "CUSTOMER_CODE": "",
+        "ADDRESS": "",
+        "CITY": "",
+        "STATE": "",
+        "STATE_CODE": "",
+        "COUNTRY": "",
+        "PINCODE": "",
+        "GSTIN": "",
+        "PAN": "",
+        "EMAIL": "",
+        "PHONE": "",
+    },
+    "BILL_TO": {
+        "NAME": "",
+        "ADDRESS": "",
+        "CITY": "",
+        "STATE": "",
+        "STATE_CODE": "",
+        "PINCODE": "",
+        "GSTIN": "",
+        "PAN": "",
+    },
+    "SHIP_TO": {
+        "NAME": "",
+        "ADDRESS": "",
+        "CITY": "",
+        "STATE": "",
+        "STATE_CODE": "",
+        "PINCODE": "",
+        "GSTIN": "",
+        "PAN": "",
+    },
+    "PURCHASE_ORDER": {
+        "PO_NUMBER": "",
+        "PO_DATE": "",
+        "PURCHASE_ORDER_REFERENCE": "",
+        "PURCHASE_REQUISITION_NUMBER": "",
+        "CONTRACT_NUMBER": "",
+        "AGREEMENT_NUMBER": "",
+        "WORK_ORDER_NUMBER": "",
+    },
+    "DELIVERY": {
+        "DELIVERY_ORDER_NUMBER": "",
+        "DELIVERY_ORDER_DATE": "",
+        "DELIVERY_NOTE_NUMBER": "",
+        "DELIVERY_NOTE_DATE": "",
+        "CHALLAN_NUMBER": "",
+        "CHALLAN_DATE": "",
+        "DISPATCH_DATE": "",
+        "DELIVERY_DATE": "",
+        "EWAY_BILL_NUMBER": "",
+        "LR_NUMBER": "",
+        "LR_DATE": "",
+        "TRANSPORTER_NAME": "",
+        "VEHICLE_NUMBER": "",
+        "VEHICLE_TYPE": "",
+        "FROM_LOCATION": "",
+        "TO_LOCATION": "",
+        "PLACE_OF_DISPATCH": "",
+        "PLACE_OF_DELIVERY": "",
+    },
+    "METADATA": {
+        "PAGE_TYPE": "",
+        "LANGUAGE": "",
+        "HANDWRITTEN_CONTENT_PRESENT": "",
+        "STAMP_PRESENT": "",
+        "SIGNATURE_PRESENT": "",
+        "QR_CODE_PRESENT": "",
+        "BARCODE_PRESENT": "",
+        "IS_TARGET_DOCUMENT": "",
+    },
+}
+
+_CHUNK_A2_SCHEMA = {
+    "ITEMS": [
+        {
+            "LINE_NUMBER": "",
+            "ITEM_CODE": "",
+            "MATERIAL_CODE": "",
+            "LR_NUMBER": "",
+            "VEHICLE_NUMBER": "",
+            "PRODUCT_NAME": "",
+            "DESCRIPTION": "",
+            "HSN_CODE": "",
+            "SAC_CODE": "",
+            "QUANTITY": "",
+            "UOM": "",
+            "WEIGHT": "",
+            "WEIGHT_UNIT": "",
+            "UNIT_PRICE": "",
+            "GROSS_AMOUNT": "",
+            "DISCOUNT": "",
+            "DISCOUNT_PERCENTAGE": "",
+            "TAXABLE_VALUE": "",
+            "GST_RATE": "",
+            "CGST_RATE": "",
+            "CGST_AMOUNT": "",
+            "SGST_RATE": "",
+            "SGST_AMOUNT": "",
+            "IGST_RATE": "",
+            "IGST_AMOUNT": "",
+            "UTGST_RATE": "",
+            "UTGST_AMOUNT": "",
+            "CESS_RATE": "",
+            "CESS_AMOUNT": "",
+            "OTHER_CHARGES": "",
+            "LINE_TOTAL": "",
+        }
+    ],
+    "ADDITIONAL_CHARGES": [
+        {
+            "DESCRIPTION": "",
+            "CHARGE_TYPE": "",
+            "QUANTITY": "",
+            "RATE": "",
+            "AMOUNT": "",
+            "TAXABLE_VALUE": "",
+            "GST_RATE": "",
+            "CGST_AMOUNT": "",
+            "SGST_AMOUNT": "",
+            "IGST_AMOUNT": "",
+            "TOTAL_AMOUNT": "",
+        }
+    ],
+}
+
+_CHUNK_B_SCHEMA = {
+    "TAX": {
+        "TAXABLE_AMOUNT": "",
+        "CGST_RATE": "",
+        "CGST_AMOUNT": "",
+        "SGST_RATE": "",
+        "SGST_AMOUNT": "",
+        "IGST_RATE": "",
+        "IGST_AMOUNT": "",
+        "UTGST_RATE": "",
+        "UTGST_AMOUNT": "",
+        "CESS_RATE": "",
+        "CESS_AMOUNT": "",
+        "OTHER_TAX": "",
+        "TOTAL_TAX": "",
+    },
+    "AMOUNTS": {
+        "SUBTOTAL": "",
+        "GROSS_AMOUNT": "",
+        "TOTAL_DISCOUNT": "",
+        "FREIGHT": "",
+        "TRANSPORTATION_CHARGES": "",
+        "PACKING_CHARGES": "",
+        "LOADING_CHARGES": "",
+        "UNLOADING_CHARGES": "",
+        "INSURANCE_CHARGES": "",
+        "HANDLING_CHARGES": "",
+        "OTHER_CHARGES": "",
+        "TAXABLE_AMOUNT": "",
+        "TOTAL_TAX": "",
+        "ROUND_OFF": "",
+        "ADVANCE_PAID": "",
+        "TOTAL_AMOUNT": "",
+        "AMOUNT_PAID": "",
+        "BALANCE_DUE": "",
+        "AMOUNT_IN_WORDS": "",
+    },
+    "PAYMENT": {
+        "PAYMENT_TERMS": "",
+        "DUE_DATE": "",
+        "CREDIT_PERIOD_DAYS": "",
+        "PAYMENT_METHOD": "",
+        "BANK_NAME": "",
+        "BANK_ACCOUNT_NUMBER": "",
+        "IFSC_CODE": "",
+        "UPI_ID": "",
+    },
+    "LOGISTICS": {
+        "VEHICLE_NUMBER": "",
+        "VEHICLE_TYPE": "",
+        "CONTAINER_NUMBER": "",
+        "CONTAINER_TYPE": "",
+        "CONTAINER_DETAILS": "",
+        "WEIGHT": "",
+        "WEIGHT_UNIT": "",
+        "FREIGHT_AMOUNT": "",
+        "WEIGHMENT_CHARGES": "",
+        "DETENTION_CHARGES": "",
+        "DEMURRAGE_CHARGES": "",
+        "PARKING_CHARGES": "",
+        "LOADING_CHARGES": "",
+        "UNLOADING_CHARGES": "",
+        "EMPTY_UNLOADING_CHARGES": "",
+    },
+    "GST_COMPLIANCE": {
+        "SUPPLIER_GSTIN": "",
+        "CUSTOMER_GSTIN": "",
+        "PLACE_OF_SUPPLY": "",
+        "PLACE_OF_SUPPLY_STATE_CODE": "",
+        "REVERSE_CHARGE": "",
+        "IRN": "",
+        "ACKNOWLEDGEMENT_NUMBER": "",
+        "ACKNOWLEDGEMENT_DATE": "",
+        "QR_CODE_DATA": "",
+        "EWAY_BILL_NUMBER": "",
+        "GST_TAXABLE_VALUE": "",
+        "CGST": "",
+        "SGST": "",
+        "IGST": "",
+        "UTGST": "",
+        "CESS": "",
+    },
+    "REFERENCES": {
+        "PO_NUMBERS": [],
+        "SALES_ORDER_NUMBERS": [],
+        "DELIVERY_ORDER_NUMBERS": [],
+        "DELIVERY_NOTE_NUMBERS": [],
+        "CHALLAN_NUMBERS": [],
+        "LR_NUMBERS": [],
+        "EWAY_BILL_NUMBERS": [],
+        "CONTAINER_NUMBERS": [],
+        "VEHICLE_NUMBERS": [],
+        "OTHER_REFERENCE_NUMBERS": [],
+    },
+    "APPROVAL": {
+        "AUTHORIZED_SIGNATORY_NAME": "",
+        "RECEIVER_NAME": "",
+        "RECEIVER_SIGNATURE_PRESENT": "",
+        "SUPPLIER_SIGNATURE_PRESENT": "",
+        "COMPANY_STAMP_PRESENT": "",
+    },
+}
+
+
+def _render_schema(schema: dict) -> str:
+    return "[" + json.dumps(schema, indent=2) + ",...]"
+
+
+def _blank_schema(schema: dict) -> dict:
+    """Blank version of a chunk schema - top-level keys that are themselves
+    arrays (ITEMS, ADDITIONAL_CHARGES) blank to [], keys that are objects
+    blank to an all-"" (or all-[] for their own list fields) copy."""
+    blank = {}
+    for key, value in schema.items():
+        if isinstance(value, list):
+            blank[key] = []
+        else:
+            blank[key] = {field: ([] if isinstance(v, list) else "") for field, v in value.items()}
+    return blank
+
+
+# Three prompts sent per page (see model.py: extract_receipt) - ChatPDF caps
+# every chat message and its response at ~2500 tokens, and even a two-way
+# split still overflowed on the ITEMS-heavy half, so the schema is split
+# three ways instead. Merging the three response arrays back together by
+# invoice index reconstructs exactly the same combined schema the
+# single-call version used to return - CHUNK_KEYS's three lists together
+# cover every top-level key, none renamed or dropped. The first chunk
+# (header/parties) carries METADATA.IS_TARGET_DOCUMENT, so a page found not
+# to be a target document can skip the other two calls entirely and use
+# BLANK_CHUNKS instead - see extract_receipt.
+PROMPT_CHUNKS = [
+    _COMMON_HEADER + _CHUNK_A1_RULES + _render_schema(_CHUNK_A1_SCHEMA),
+    _COMMON_HEADER + _CHUNK_A2_RULES + _render_schema(_CHUNK_A2_SCHEMA),
+    _COMMON_HEADER + _CHUNK_B_RULES + _render_schema(_CHUNK_B_SCHEMA),
+]
+
+CHUNK_KEYS = [
+    list(_CHUNK_A1_SCHEMA.keys()),
+    list(_CHUNK_A2_SCHEMA.keys()),
+    list(_CHUNK_B_SCHEMA.keys()),
+]
+
+# Blank fallback for each chunk after the first, used when chunk 0 already
+# determined this page is not a target document.
+BLANK_CHUNKS = [_blank_schema(_CHUNK_A2_SCHEMA), _blank_schema(_CHUNK_B_SCHEMA)]
+
+
+def blank_invoice() -> dict:
+    """A fresh, fully-blank invoice dict covering every key in the schema -
+    used when ChatPDF rejects a page outright (e.g. "Could not read PDF" on
+    an almost-blank scanned page) instead of returning an empty extraction,
+    so that case is treated the same as any other blank/non-target page."""
+    invoice = _blank_schema(_CHUNK_A1_SCHEMA)
+    invoice.update(_blank_schema(_CHUNK_A2_SCHEMA))
+    invoice.update(_blank_schema(_CHUNK_B_SCHEMA))
+    return invoice
