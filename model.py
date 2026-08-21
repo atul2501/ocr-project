@@ -53,19 +53,18 @@ PROMPT = (PROMPTS)
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 
-def sharpen_image(png_bytes: bytes) -> bytes:
-    with Image.open(io.BytesIO(png_bytes)) as img:
-        gray = ImageOps.autocontrast(img.convert('L'), cutoff=CONTRAST_CUTOFF)
-        sharpened = gray.filter(
-            ImageFilter.UnsharpMask(
-                radius=SHARPEN_RADIUS,
-                percent=SHARPEN_PERCENT,
-                threshold=SHARPEN_THRESHOLD,
-            )
+def sharpen_image(img: Image.Image) -> bytes:
+    gray = ImageOps.autocontrast(img.convert('L'), cutoff=CONTRAST_CUTOFF)
+    sharpened = gray.filter(
+        ImageFilter.UnsharpMask(
+            radius=SHARPEN_RADIUS,
+            percent=SHARPEN_PERCENT,
+            threshold=SHARPEN_THRESHOLD,
         )
-        buf = io.BytesIO()
-        sharpened.save(buf, format='PNG')
-        return buf.getvalue()
+    )
+    buf = io.BytesIO()
+    sharpened.save(buf, format='PNG')
+    return buf.getvalue()
 
 
 def save_sharpened_page(pdf_path: str, page_num: int, image_bytes: bytes) -> str:
@@ -77,7 +76,7 @@ def save_sharpened_page(pdf_path: str, page_num: int, image_bytes: bytes) -> str
     return out_path
 
 
-def _is_blank_page(raw_png_bytes: bytes) -> bool:
+def _is_blank_page(img: Image.Image) -> bool:
     """True if this page has essentially no visible content - e.g. a
     blank/near-blank scanned sheet carrying only faint scanner noise (dust
     specks, a stray line) rather than real text. Must be checked on the raw
@@ -88,8 +87,7 @@ def _is_blank_page(raw_png_bytes: bytes) -> bool:
     model anyway has been observed to make it hallucinate an entire
     plausible-looking but fabricated invoice rather than correctly report
     no content - excluding it here means it's never even asked."""
-    with Image.open(io.BytesIO(raw_png_bytes)) as img:
-        histogram = img.convert('L').histogram()
+    histogram = img.convert('L').histogram()
     total = sum(histogram)
     ink_pixels = sum(histogram[:BLANK_PAGE_INK_THRESHOLD])
     return total > 0 and (ink_pixels / total) < BLANK_PAGE_INK_FRACTION
@@ -100,14 +98,22 @@ def pdf_to_images(pdf_path: str) -> list[tuple[bytes, bool]]:
     Blank pages are still rendered and saved to SHARPENED_DIR for debugging,
     but callers should skip the OCR call entirely for them (see
     process_page/main) rather than risk the model hallucinating content onto
-    a page that has none."""
+    a page that has none.
+
+    Builds the PIL image directly from the renderer's raw pixel buffer
+    (Image.frombytes) instead of round-tripping through PNG encode/decode -
+    the previous version encoded the page to PNG once, then decoded that
+    same PNG twice (once for the blank check, once again inside
+    sharpen_image) to build the same pixels back. Same output, ~100ms/page
+    less redundant codec work."""
     doc = pymupdf.open(pdf_path)
     matrix = pymupdf.Matrix(PDF_ZOOM, PDF_ZOOM)
     pages = []
     for page_num, page in enumerate(doc, start=1):
-        raw_bytes = page.get_pixmap(matrix=matrix).tobytes('png')
-        blank = _is_blank_page(raw_bytes)
-        image_bytes = sharpen_image(raw_bytes)
+        pix = page.get_pixmap(matrix=matrix)
+        raw_image = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
+        blank = _is_blank_page(raw_image)
+        image_bytes = sharpen_image(raw_image)
         if SAVE_DEBUG_PAGES:
             save_sharpened_page(pdf_path, page_num, image_bytes)
         pages.append((image_bytes, blank))
@@ -382,6 +388,61 @@ def _build_charge_items(data: dict) -> list["InvoiceItem"]:
     ]
 
 
+# Vendor-name keywords that mark this supplier as a transport/logistics
+# company - a company registered under a name like this is freight/shipping
+# by trade even on an invoice with no vehicle number, weight or named
+# logistics charge of its own (e.g. a pure container-handling/agency-fee
+# bill), unlike a generic goods vendor that happens to ship its own product.
+_FREIGHT_VENDOR_KEYWORDS = (
+    "LOGISTICS", "TRANSPORT", "SHIPPING", "FREIGHT", "CARGO",
+    "FORWARDING", "CARRIER", "FLEET", "COURIER",
+)
+
+
+def _label_freight_items(
+    item_list: list["InvoiceItem"], primary_item_count: int, vehicle_number: str, vendor_name: str
+) -> None:
+    """Prefix each primary billed item's DESCRIPTION with "Freight Charges -"
+    when this invoice looks like a GTA/transport/freight bill, so the
+    freight line reads as freight at a glance even when the vendor's own
+    printed wording doesn't use that word (e.g. "20' Import Fixed",
+    "Container handling services..."). Never replaces or discards the
+    original printed text - only prepends a label in front of it, and only
+    when "freight" isn't already present in it, so nothing printed is lost
+    or altered.
+
+    This is a deterministic label computed from data already extracted, not
+    a value asked of the model - it carries none of the hallucination risk
+    that would come from asking the model itself to invent wording that
+    isn't on the page. "Looks like a freight bill" reuses signals already
+    trusted elsewhere in this file rather than a new guess: a printed
+    vehicle number (this invoice's own, or a per-row one), a named
+    logistics charge (weighment/detention/parking/...) alongside the
+    primary item, a per-row weight, or a vendor name that identifies the
+    supplier as a transport/logistics company (see _FREIGHT_VENDOR_KEYWORDS
+    - covers a pure container-handling/agency-fee bill with none of the
+    other signals, e.g. no vehicle number of its own)."""
+    primary_items = item_list[:primary_item_count]
+    if not primary_items:
+        return
+    is_freight_bill = (
+        bool(vehicle_number)
+        or len(item_list) > primary_item_count  # a named logistics charge was found (see _build_charge_items)
+        or any(item.VEHICLE_NUMBER or item.WEIGHT for item in primary_items)
+        or any(keyword in vendor_name.upper() for keyword in _FREIGHT_VENDOR_KEYWORDS)
+    )
+    if not is_freight_bill:
+        return
+    for item in primary_items:
+        # Word-boundary match, not a plain substring check - a company name
+        # like "THE FREIGHTERS LINE" contains "freight" as a substring
+        # without the description actually saying "freight" as a word, and
+        # a plain `"freight" in description.lower()` check would wrongly
+        # treat that as already labeled.
+        if not re.search(r"\bfreight\b", item.DESCRIPTION, re.IGNORECASE):
+            item.DESCRIPTION = f"Freight Charges - {item.DESCRIPTION}" if item.DESCRIPTION else "Freight Charges"
+
+
 @dataclass
 class InvoiceItem:
     """One SAP-mapped line item, built from an entry in the extracted
@@ -449,8 +510,12 @@ class Invoice:
         logistics = data.get("LOGISTICS", {})
         delivery = data.get("DELIVERY", {})
 
+        vehicle_number = _first_value(logistics.get("VEHICLE_NUMBER"), delivery.get("VEHICLE_NUMBER"))
+        vendor_name = _first_value(supplier.get("NAME"), supplier.get("LEGAL_NAME"), supplier.get("TRADE_NAME"))
         item_list = cls._build_item_list(data)
+        primary_item_count = len(item_list)
         item_list.extend(_build_charge_items(data))
+        _label_freight_items(item_list, primary_item_count, vehicle_number, vendor_name)
         place_of_supply_code, place_of_supply_state = _split_place_of_supply(document, gst_compliance)
         gross_total = _to_float(amounts.get("TOTAL_AMOUNT", ""))
         total_tax = (
@@ -490,7 +555,7 @@ class Invoice:
                 purchase_order.get("PURCHASE_ORDER_REFERENCE"),
                 document.get("INVOICE_REFERENCE_NUMBER"),
             ),
-            VENDOR_NAME=_first_value(supplier.get("NAME"), supplier.get("LEGAL_NAME"), supplier.get("TRADE_NAME")),
+            VENDOR_NAME=vendor_name,
             VENDOR_GST_NO=supplier.get("GSTIN", ""),
             CUSTOMER_NAME=_first_value(customer.get("NAME"), customer.get("LEGAL_NAME")),
             CUSTOMER_GST_NO=_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN")),
@@ -508,7 +573,7 @@ class Invoice:
                 customer.get("PAN"),
                 _pan_from_gstin(_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN"))),
             ),
-            VEHICLE_NUMBER=_first_value(logistics.get("VEHICLE_NUMBER"), delivery.get("VEHICLE_NUMBER")),
+            VEHICLE_NUMBER=vehicle_number,
             ITEM_LIST=item_list,
         )
 

@@ -33,9 +33,9 @@ IMPORTANT EXTRACTION RULES:
 - "PURCHASE_ORDER.PO_NUMBER" is the customer's own order/purchase
   reference that the vendor is billing against - fill it whenever the
   invoice header cites one, regardless of the exact label used ("PO No.",
-  "Order Ref", "Ref. No.", "Customer Ref", "Your Order No.", "P.O. No."),
-  not only when the words "Purchase Order" are literally printed. These
-  numbers are very often in the buyer's own ERP format (e.g. a 10-digit
+  "Order Ref", "Ref. No.", "Your Order No."), not only when the words
+  "Purchase Order" are literally printed. These numbers are very often
+  in the buyer's own ERP format (e.g. a 10-digit
   SAP PO number like "4300021506", sometimes followed by a revision and
   date such as "/ R-01 DT.06-08-2025" - keep that suffix as part of the
   value exactly as printed). If the invoice cites two distinct such
@@ -88,9 +88,7 @@ IMPORTANT EXTRACTION RULES:
   itself, belongs in "ADDITIONAL_CHARGES", never in "ITEMS", even when it
   is printed in the same block or table as the main item, uses its own HSN/
   SAC code, or is billed on the same invoice as if it were another line.
-  This is a general rule, not just the specific examples below - use the
-  same judgment for any charge shaped like these even if it isn't literally
-  one of them:
+  Applies to any charge shaped like these, not only the exact examples below:
   - Transport/logistics add-ons: weighment charges, parking charges,
     loading/unloading charges, detention charges, demurrage charges,
     handling charges.
@@ -200,28 +198,24 @@ DOCUMENT TYPE FILTER:
   field blank, since none of the e-Way Bill's other content (vehicle,
   transporter, weight, etc.) should be extracted.
 
-ALPHANUMERIC ID FIELDS - read each character individually, do not skim:
+ALPHANUMERIC ID FIELDS - read each character individually, do not skim. For
+any of these, if the extracted value doesn't fit its expected format below
+after careful re-reading, return an empty string "" rather than a guess:
 - Commonly confused glyphs: 0 vs O, 1 vs I vs l, 5 vs S, 8 vs B, 6 vs G, 2 vs Z, 9 vs g/q.
   Look at the surrounding characters and the field's expected format below to decide
   which one is actually printed.
 - GSTIN: exactly 15 characters - 2 digits (state code), 10 characters (PAN: 5 letters,
   4 digits, 1 letter), 1 digit (entity code), the letter "Z", 1 alphanumeric checksum.
-  If the extracted value does not fit this pattern, re-examine the image before
-  returning it; if still uncertain, return an empty string "" rather than a guess.
 - PAN: exactly 10 characters - 5 letters, 4 digits, 1 letter (e.g. AAAAA9999A).
 - GST_COMPLIANCE.IRN: exactly 64 lowercase hexadecimal characters (0-9, a-f
   only - no uppercase, no spaces, no dashes). This is the e-invoice Invoice
   Reference Number printed near the IRN/QR code block. Count the characters
   and re-check every character against a hex-digit ambiguity (e.g. 3 vs 5,
-  a vs d, 8 vs B) before returning it; if the value does not have exactly
-  64 hex characters after careful re-reading, return an empty string ""
-  rather than a guess.
-- Phone: digits only (plus an optional leading + and country code); re-check any
-  digit that could be misread as a letter (e.g. B/8, S/5, O/0, G/6).
+  a vs d, 8 vs B) before returning it.
+- Phone: digits only (plus an optional leading + and country code); re-check
+  against the glyph pairs above for any digit that could be misread as a letter.
 - Email: must match name@domain.tld with no spaces; re-check characters that could
   be letter/digit confusions before returning.
-- If any of these fields fail their expected format after careful re-reading,
-  return an empty string "" instead of an incorrect value.
 
 Return exactly this JSON structure - one such object per invoice found on
 the page, wrapped in an array as described above:
