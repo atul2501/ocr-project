@@ -1,4 +1,26 @@
-2026-08-21 13:10:55,537 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-21 13:10:55,558 INFO done: tmph8zeluis.pdf#page1 (1 invoice(s))
-2026-08-21 13:12:48,448 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
-2026-08-21 13:12:48,474 INFO done: tmp_lhoq3y9.pdf#page1 (1 invoice(s))
+2026-08-21 14:02:41,445 INFO skipped (blank page, no OCR call): tmpoo8vbbd9.pdf#page2
+2026-08-21 14:03:23,105 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:03:23,114 INFO done: tmpoo8vbbd9.pdf#page1 (1 invoice(s))
+2026-08-21 14:07:43,794 INFO skipped (blank page, no OCR call): tmpfe_yqjrh.pdf#page2
+2026-08-21 14:08:16,854 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:08:16,863 INFO done: tmpfe_yqjrh.pdf#page1 (1 invoice(s))
+2026-08-21 14:10:59,693 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:10:59,696 INFO skipped (blank): tmpzdd0n5lb.pdf#page2
+2026-08-21 14:11:01,075 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:11:01,079 INFO skipped (blank): tmpzdd0n5lb.pdf#page3
+2026-08-21 14:11:01,966 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:11:01,969 INFO skipped (blank): tmpzdd0n5lb.pdf#page5
+2026-08-21 14:11:05,857 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:11:05,859 INFO skipped (blank): tmpzdd0n5lb.pdf#page7
+2026-08-21 14:11:07,771 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:11:07,772 INFO skipped (blank): tmpzdd0n5lb.pdf#page9
+2026-08-21 14:11:10,581 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:11:10,582 INFO done: tmpzdd0n5lb.pdf#page8 (1 invoice(s))
+2026-08-21 14:11:19,574 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:11:19,580 INFO skipped (blank): tmpzdd0n5lb.pdf#page6
+2026-08-21 14:11:21,356 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:11:21,357 INFO skipped (blank): tmpzdd0n5lb.pdf#page10
+2026-08-21 14:11:22,653 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:11:22,658 INFO skipped (blank): tmpzdd0n5lb.pdf#page4
+2026-08-21 14:11:25,399 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 14:11:25,403 INFO done: tmpzdd0n5lb.pdf#page1 (1 invoice(s))

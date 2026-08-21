@@ -10,11 +10,10 @@ KEY_ENV_PREFIX = 'OLLAMA_API_KEY_'
 MODEL = 'minimax-m3'  # vision-capable, free tier; qwen3-vl:32b returned 404 "model not found" against this Ollama cloud account (process.log, 2026-08-21 12:41) - confirm the correct cloud-side tag before switching back
 
 INVOICE_DIR = 'invoice'
-PDF_ZOOM = 2.5  # render scale; higher = sharper but slower/bigger
+PDF_ZOOM = 2  # render scale; higher = sharper but slower/bigger
 OUTPUT_PATH = 'out.json'
 LOG_PATH = 'process.log'
 SHARPENED_DIR = 'output'
-SHARPENED_MAX_AGE_SECONDS = 60 * 60  # sharpened debug page PDFs in SHARPENED_DIR older than this get auto-deleted
 SAVE_DEBUG_PAGES = False  # write each rendered page to SHARPENED_DIR as a debug PDF - turn back on if you need to eyeball what the model actually saw
 
 # Fill in as many keys as you have - 1 is fine, so is 8. Requests rotate

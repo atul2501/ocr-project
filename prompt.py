@@ -135,7 +135,7 @@ IMPORTANT EXTRACTION RULES:
   either one.
 - Extract Indian GSTIN, PAN, CIN and other statutory identifiers when visible.
 - Read clearly visible handwritten information, but do not guess unclear handwriting.
-- Keep dates in YYYY-MM-DD format when unambiguous.
+- Keep dates in DD-MM-YYYY format when unambiguous.
 - Use numeric values for quantities, rates, taxes and amounts when clearly readable.
 - Every amount/quantity/rate field (QUANTITY, WEIGHT, UNIT_PRICE, RATE,
   LINE_TOTAL, AMOUNT, TOTAL_AMOUNT, every *_AMOUNT under TAX, and every

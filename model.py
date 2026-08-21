@@ -30,7 +30,6 @@ from api import (
     SHARPEN_RADIUS,
     SHARPEN_THRESHOLD,
     SHARPENED_DIR,
-    SHARPENED_MAX_AGE_SECONDS,
     get_client,
     mark_exhausted,
 )
@@ -114,22 +113,6 @@ def pdf_to_images(pdf_path: str) -> list[tuple[bytes, bool]]:
         pages.append((image_bytes, blank))
     doc.close()
     return pages
-
-
-def cleanup_old_output() -> None:
-    """Delete sharpened debug page PDFs in SHARPENED_DIR older than
-    SHARPENED_MAX_AGE_SECONDS - keeps output/ from growing unbounded
-    across CLI runs and API requests."""
-    if not os.path.isdir(SHARPENED_DIR):
-        return
-    cutoff = time.time() - SHARPENED_MAX_AGE_SECONDS
-    for name in os.listdir(SHARPENED_DIR):
-        path = os.path.join(SHARPENED_DIR, name)
-        try:
-            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
-                os.remove(path)
-        except OSError:
-            logger.exception(f"failed to clean up {path}")
 
 
 def extract_receipt(image) -> list[dict]:
@@ -792,7 +775,6 @@ def main():
         raise
 
     print(json.dumps(output, indent=2, ensure_ascii=False))
-    cleanup_old_output()
 
 
 if __name__ == '__main__':
