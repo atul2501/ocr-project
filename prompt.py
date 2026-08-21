@@ -55,7 +55,10 @@ IMPORTANT EXTRACTION RULES:
   rather than the vendor's own printed invoice number, it is the same
   invoice, not a new one - leave INVOICE_NUMBER "" on that page rather than
   filling it with the internal reference number.
-- Distinguish Supplier/Vendor, Customer/Buyer, Bill-To and Ship-To.
+- Distinguish Supplier/Vendor from Customer/Buyer. If the invoice
+  separately shows a Bill-To and a Ship-To party, "CUSTOMER" should be the
+  Bill-To (the party actually being invoiced), not a Ship-To delivery
+  address/warehouse that only receives the goods.
 - "PLACE_OF_SUPPLY" is a specific statutory GST field - fill it only from
   text actually labelled "Place of Supply" (or an e-invoice's IRN/QR
   compliance block that states it). Never fill it from a route/destination
@@ -73,10 +76,10 @@ IMPORTANT EXTRACTION RULES:
   one table (e.g. a fleet-owner's bill with one row per vehicle, each row
   showing its own LR No., Vehicle No., date and Amount for a single trip).
   Treat each such row as its own entry in "ITEMS", and fill that row's own
-  "LR_NUMBER" and "VEHICLE_NUMBER" from that row specifically - do not
-  leave them blank because a vehicle/LR number for a different row already
-  exists elsewhere on the page, and do not merge these rows into one entry
-  just because they share the same From/To/product description.
+  "VEHICLE_NUMBER" from that row specifically - do not leave it blank
+  because a vehicle number for a different row already exists elsewhere on
+  the page, and do not merge these rows into one entry just because they
+  share the same From/To/product description.
 - "ITEMS" is only for the actual goods or service being billed - e.g. the
   product rows on a sales invoice, or the freight/transportation charge
   itself on a GTA/transporter bill (that charge is the primary billed
@@ -126,8 +129,10 @@ IMPORTANT EXTRACTION RULES:
   Tons", "MT", "Kg", "Tons") - never abbreviate or substitute a unit letter
   that isn't itself printed on the page (do not write "T" for a value
   labelled "Metric Tons" unless "T" is what's actually printed).
-- Extract GST components separately: CGST, SGST, IGST, UTGST and Cess.
-- Extract HSN/SAC codes whenever visible.
+- Extract GST components separately: CGST, SGST and IGST amounts.
+- Extract the HSN or SAC code whenever visible and put it in "HSN_CODE" -
+  this system does not track them as separate fields, so use HSN_CODE for
+  either one.
 - Extract Indian GSTIN, PAN, CIN and other statutory identifiers when visible.
 - Read clearly visible handwritten information, but do not guess unclear handwriting.
 - Keep dates in YYYY-MM-DD format when unambiguous.
@@ -190,11 +195,10 @@ DOCUMENT TYPE FILTER:
   on that same e-Way Bill, and that invoice's own page very often never
   prints this date itself. For an e-Way Bill page like this only, set
   "METADATA.IS_TARGET_DOCUMENT" to true and fill ONLY "GST_COMPLIANCE.IRN",
-  "GST_COMPLIANCE.ACKNOWLEDGEMENT_NUMBER", "GST_COMPLIANCE.ACKNOWLEDGEMENT_DATE"
-  and "DOCUMENT.INVOICE_NUMBER" (the invoice number the e-Way Bill itself
-  references) - leave every other field blank, since none of the e-Way
-  Bill's other content (vehicle, transporter, weight, etc.) should be
-  extracted.
+  "GST_COMPLIANCE.ACKNOWLEDGEMENT_DATE" and "DOCUMENT.INVOICE_NUMBER" (the
+  invoice number the e-Way Bill itself references) - leave every other
+  field blank, since none of the e-Way Bill's other content (vehicle,
+  transporter, weight, etc.) should be extracted.
 
 ALPHANUMERIC ID FIELDS - read each character individually, do not skim:
 - Commonly confused glyphs: 0 vs O, 1 vs I vs l, 5 vs S, 8 vs B, 6 vs G, 2 vs Z, 9 vs g/q.
@@ -224,73 +228,23 @@ the page, wrapped in an array as described above:
 
 [{
   "DOCUMENT": {
-    "DOCUMENT_TYPE": "",
-    "DOCUMENT_TITLE": "",
     "INVOICE_NUMBER": "",
     "INVOICE_DATE": "",
     "INVOICE_REFERENCE_NUMBER": "",
-    "ORIGINAL_INVOICE_NUMBER": "",
-    "REVISION_NUMBER": "",
-    "CURRENCY": "",
-    "PLACE_OF_SUPPLY": "",
-    "SUPPLY_TYPE": "",
-    "REVERSE_CHARGE": ""
+    "PLACE_OF_SUPPLY": ""
   },
 
   "SUPPLIER": {
     "NAME": "",
     "LEGAL_NAME": "",
     "TRADE_NAME": "",
-    "VENDOR_CODE": "",
-    "ADDRESS": "",
-    "CITY": "",
-    "STATE": "",
-    "STATE_CODE": "",
-    "COUNTRY": "",
-    "PINCODE": "",
     "GSTIN": "",
-    "PAN": "",
-    "CIN": "",
-    "TAN": "",
-    "EMAIL": "",
-    "PHONE": "",
-    "WEBSITE": ""
+    "PAN": ""
   },
 
   "CUSTOMER": {
     "NAME": "",
     "LEGAL_NAME": "",
-    "CUSTOMER_CODE": "",
-    "ADDRESS": "",
-    "CITY": "",
-    "STATE": "",
-    "STATE_CODE": "",
-    "COUNTRY": "",
-    "PINCODE": "",
-    "GSTIN": "",
-    "PAN": "",
-    "EMAIL": "",
-    "PHONE": ""
-  },
-
-  "BILL_TO": {
-    "NAME": "",
-    "ADDRESS": "",
-    "CITY": "",
-    "STATE": "",
-    "STATE_CODE": "",
-    "PINCODE": "",
-    "GSTIN": "",
-    "PAN": ""
-  },
-
-  "SHIP_TO": {
-    "NAME": "",
-    "ADDRESS": "",
-    "CITY": "",
-    "STATE": "",
-    "STATE_CODE": "",
-    "PINCODE": "",
     "GSTIN": "",
     "PAN": ""
   },
@@ -298,66 +252,23 @@ the page, wrapped in an array as described above:
   "PURCHASE_ORDER": {
     "PO_NUMBER": "",
     "PO_DATE": "",
-    "PURCHASE_ORDER_REFERENCE": "",
-    "PURCHASE_REQUISITION_NUMBER": "",
-    "CONTRACT_NUMBER": "",
-    "AGREEMENT_NUMBER": "",
-    "WORK_ORDER_NUMBER": ""
+    "PURCHASE_ORDER_REFERENCE": ""
   },
 
   "DELIVERY": {
-    "DELIVERY_ORDER_NUMBER": "",
-    "DELIVERY_ORDER_DATE": "",
-    "DELIVERY_NOTE_NUMBER": "",
-    "DELIVERY_NOTE_DATE": "",
-    "CHALLAN_NUMBER": "",
-    "CHALLAN_DATE": "",
-    "DISPATCH_DATE": "",
-    "DELIVERY_DATE": "",
-    "EWAY_BILL_NUMBER": "",
-    "LR_NUMBER": "",
-    "LR_DATE": "",
-    "TRANSPORTER_NAME": "",
-    "VEHICLE_NUMBER": "",
-    "VEHICLE_TYPE": "",
-    "FROM_LOCATION": "",
-    "TO_LOCATION": "",
-    "PLACE_OF_DISPATCH": "",
-    "PLACE_OF_DELIVERY": ""
+    "VEHICLE_NUMBER": ""
   },
 
   "ITEMS": [
     {
-      "LINE_NUMBER": "",
-      "ITEM_CODE": "",
-      "MATERIAL_CODE": "",
-      "LR_NUMBER": "",
-      "VEHICLE_NUMBER": "",
-      "PRODUCT_NAME": "",
       "DESCRIPTION": "",
       "HSN_CODE": "",
-      "SAC_CODE": "",
       "QUANTITY": "",
       "UOM": "",
       "WEIGHT": "",
       "WEIGHT_UNIT": "",
       "UNIT_PRICE": "",
-      "GROSS_AMOUNT": "",
-      "DISCOUNT": "",
-      "DISCOUNT_PERCENTAGE": "",
-      "TAXABLE_VALUE": "",
-      "GST_RATE": "",
-      "CGST_RATE": "",
-      "CGST_AMOUNT": "",
-      "SGST_RATE": "",
-      "SGST_AMOUNT": "",
-      "IGST_RATE": "",
-      "IGST_AMOUNT": "",
-      "UTGST_RATE": "",
-      "UTGST_AMOUNT": "",
-      "CESS_RATE": "",
-      "CESS_AMOUNT": "",
-      "OTHER_CHARGES": "",
+      "VEHICLE_NUMBER": "",
       "LINE_TOTAL": ""
     }
   ],
@@ -366,76 +277,26 @@ the page, wrapped in an array as described above:
     {
       "DESCRIPTION": "",
       "CHARGE_TYPE": "",
-      "QUANTITY": "",
-      "RATE": "",
       "AMOUNT": "",
-      "TAXABLE_VALUE": "",
-      "GST_RATE": "",
-      "CGST_AMOUNT": "",
-      "SGST_AMOUNT": "",
-      "IGST_AMOUNT": "",
       "TOTAL_AMOUNT": ""
     }
   ],
 
   "TAX": {
     "TAXABLE_AMOUNT": "",
-    "CGST_RATE": "",
     "CGST_AMOUNT": "",
-    "SGST_RATE": "",
     "SGST_AMOUNT": "",
-    "IGST_RATE": "",
-    "IGST_AMOUNT": "",
-    "UTGST_RATE": "",
-    "UTGST_AMOUNT": "",
-    "CESS_RATE": "",
-    "CESS_AMOUNT": "",
-    "OTHER_TAX": "",
-    "TOTAL_TAX": ""
+    "IGST_AMOUNT": ""
   },
 
   "AMOUNTS": {
     "SUBTOTAL": "",
-    "GROSS_AMOUNT": "",
-    "TOTAL_DISCOUNT": "",
-    "FREIGHT": "",
-    "TRANSPORTATION_CHARGES": "",
-    "PACKING_CHARGES": "",
-    "LOADING_CHARGES": "",
-    "UNLOADING_CHARGES": "",
-    "INSURANCE_CHARGES": "",
-    "HANDLING_CHARGES": "",
-    "OTHER_CHARGES": "",
     "TAXABLE_AMOUNT": "",
-    "TOTAL_TAX": "",
-    "ROUND_OFF": "",
-    "ADVANCE_PAID": "",
-    "TOTAL_AMOUNT": "",
-    "AMOUNT_PAID": "",
-    "BALANCE_DUE": "",
-    "AMOUNT_IN_WORDS": ""
-  },
-
-  "PAYMENT": {
-    "PAYMENT_TERMS": "",
-    "DUE_DATE": "",
-    "CREDIT_PERIOD_DAYS": "",
-    "PAYMENT_METHOD": "",
-    "BANK_NAME": "",
-    "BANK_ACCOUNT_NUMBER": "",
-    "IFSC_CODE": "",
-    "UPI_ID": ""
+    "TOTAL_AMOUNT": ""
   },
 
   "LOGISTICS": {
     "VEHICLE_NUMBER": "",
-    "VEHICLE_TYPE": "",
-    "CONTAINER_NUMBER": "",
-    "CONTAINER_TYPE": "",
-    "CONTAINER_DETAILS": "",
-    "WEIGHT": "",
-    "WEIGHT_UNIT": "",
-    "FREIGHT_AMOUNT": "",
     "WEIGHMENT_CHARGES": "",
     "DETENTION_CHARGES": "",
     "DEMURRAGE_CHARGES": "",
@@ -446,53 +307,14 @@ the page, wrapped in an array as described above:
   },
 
   "GST_COMPLIANCE": {
-    "SUPPLIER_GSTIN": "",
     "CUSTOMER_GSTIN": "",
     "PLACE_OF_SUPPLY": "",
     "PLACE_OF_SUPPLY_STATE_CODE": "",
-    "REVERSE_CHARGE": "",
     "IRN": "",
-    "ACKNOWLEDGEMENT_NUMBER": "",
-    "ACKNOWLEDGEMENT_DATE": "",
-    "QR_CODE_DATA": "",
-    "EWAY_BILL_NUMBER": "",
-    "GST_TAXABLE_VALUE": "",
-    "CGST": "",
-    "SGST": "",
-    "IGST": "",
-    "UTGST": "",
-    "CESS": ""
-  },
-
-  "REFERENCES": {
-    "PO_NUMBERS": [],
-    "SALES_ORDER_NUMBERS": [],
-    "DELIVERY_ORDER_NUMBERS": [],
-    "DELIVERY_NOTE_NUMBERS": [],
-    "CHALLAN_NUMBERS": [],
-    "LR_NUMBERS": [],
-    "EWAY_BILL_NUMBERS": [],
-    "CONTAINER_NUMBERS": [],
-    "VEHICLE_NUMBERS": [],
-    "OTHER_REFERENCE_NUMBERS": []
-  },
-
-  "APPROVAL": {
-    "AUTHORIZED_SIGNATORY_NAME": "",
-    "RECEIVER_NAME": "",
-    "RECEIVER_SIGNATURE_PRESENT": "",
-    "SUPPLIER_SIGNATURE_PRESENT": "",
-    "COMPANY_STAMP_PRESENT": ""
+    "ACKNOWLEDGEMENT_DATE": ""
   },
 
   "METADATA": {
-    "PAGE_TYPE": "",
-    "LANGUAGE": "",
-    "HANDWRITTEN_CONTENT_PRESENT": "",
-    "STAMP_PRESENT": "",
-    "SIGNATURE_PRESENT": "",
-    "QR_CODE_PRESENT": "",
-    "BARCODE_PRESENT": "",
     "IS_TARGET_DOCUMENT": ""
   }
 },...]

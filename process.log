@@ -1,0 +1,4 @@
+2026-08-21 13:10:55,537 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 13:10:55,558 INFO done: tmph8zeluis.pdf#page1 (1 invoice(s))
+2026-08-21 13:12:48,448 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-08-21 13:12:48,474 INFO done: tmp_lhoq3y9.pdf#page1 (1 invoice(s))

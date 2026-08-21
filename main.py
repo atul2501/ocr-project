@@ -40,9 +40,20 @@ async def _process_pdf(pdf_bytes: bytes):
         loop = asyncio.get_running_loop()
         # Rendering/sharpening is quick CPU work; run it off the event loop
         # on the default executor so it doesn't steal an OCR queue slot.
-        pages = await loop.run_in_executor(
+        rendered = await loop.run_in_executor(
             None, lambda: list(enumerate(pdf_to_images(tmp_path), start=1))
         )
+        pages = []
+        for page_num, (image_bytes, blank) in rendered:
+            if blank:
+                # A blank/near-blank page sent to the model anyway has been
+                # observed to make it hallucinate a whole fabricated invoice
+                # rather than correctly report no content - skip the OCR
+                # call entirely instead of risking that (see model.py:
+                # _is_blank_page).
+                logger.info(f"skipped (blank page, no OCR call): {os.path.basename(tmp_path)}#page{page_num}")
+                continue
+            pages.append((page_num, image_bytes))
 
         # Submit to the shared process-wide executor (main.executor, capped
         # at MAX_WORKERS) and await the futures instead of blocking on them,

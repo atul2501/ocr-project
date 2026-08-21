@@ -12,6 +12,8 @@ from prompt import PROMPTS
 import httpx
 import pymupdf
 from api import (
+    BLANK_PAGE_INK_FRACTION,
+    BLANK_PAGE_INK_THRESHOLD,
     CONTRAST_CUTOFF,
     INVOICE_DIR,
     LOG_PATH,
@@ -23,12 +25,14 @@ from api import (
     RETRY_BACKOFF_BASE,
     RETRY_BACKOFF_CAP,
     RETRYABLE_STATUS_CODES,
+    SAVE_DEBUG_PAGES,
     SHARPEN_PERCENT,
     SHARPEN_RADIUS,
     SHARPEN_THRESHOLD,
     SHARPENED_DIR,
     SHARPENED_MAX_AGE_SECONDS,
     get_client,
+    mark_exhausted,
 )
 from ollama import ResponseError
 from PIL import Image, ImageFilter, ImageOps
@@ -74,16 +78,42 @@ def save_sharpened_page(pdf_path: str, page_num: int, image_bytes: bytes) -> str
     return out_path
 
 
-def pdf_to_images(pdf_path: str) -> list[bytes]:
+def _is_blank_page(raw_png_bytes: bytes) -> bool:
+    """True if this page has essentially no visible content - e.g. a
+    blank/near-blank scanned sheet carrying only faint scanner noise (dust
+    specks, a stray line) rather than real text. Must be checked on the raw
+    render, before sharpen_image's autocontrast step: autocontrast stretches
+    whatever tiny brightness variation exists on a blank page across the
+    full 0-255 range, which would make a blank page look artificially
+    content-rich if checked afterwards instead. A page like this fed to the
+    model anyway has been observed to make it hallucinate an entire
+    plausible-looking but fabricated invoice rather than correctly report
+    no content - excluding it here means it's never even asked."""
+    with Image.open(io.BytesIO(raw_png_bytes)) as img:
+        histogram = img.convert('L').histogram()
+    total = sum(histogram)
+    ink_pixels = sum(histogram[:BLANK_PAGE_INK_THRESHOLD])
+    return total > 0 and (ink_pixels / total) < BLANK_PAGE_INK_FRACTION
+
+
+def pdf_to_images(pdf_path: str) -> list[tuple[bytes, bool]]:
+    """Returns (sharpened_image_bytes, is_blank) per page, in page order.
+    Blank pages are still rendered and saved to SHARPENED_DIR for debugging,
+    but callers should skip the OCR call entirely for them (see
+    process_page/main) rather than risk the model hallucinating content onto
+    a page that has none."""
     doc = pymupdf.open(pdf_path)
     matrix = pymupdf.Matrix(PDF_ZOOM, PDF_ZOOM)
-    images = []
+    pages = []
     for page_num, page in enumerate(doc, start=1):
-        image_bytes = sharpen_image(page.get_pixmap(matrix=matrix).tobytes('png'))
-        save_sharpened_page(pdf_path, page_num, image_bytes)
-        images.append(image_bytes)
+        raw_bytes = page.get_pixmap(matrix=matrix).tobytes('png')
+        blank = _is_blank_page(raw_bytes)
+        image_bytes = sharpen_image(raw_bytes)
+        if SAVE_DEBUG_PAGES:
+            save_sharpened_page(pdf_path, page_num, image_bytes)
+        pages.append((image_bytes, blank))
     doc.close()
-    return images
+    return pages
 
 
 def cleanup_old_output() -> None:
@@ -108,17 +138,36 @@ def extract_receipt(image) -> list[dict]:
     than one separate invoice (e.g. two small bills photographed together),
     and the prompt asks the model to return one array entry per invoice in
     that case. Every entry is kept - none may be silently dropped."""
-    response = get_client().chat(
-        model=MODEL,
-        messages=[
-            {
-                'role': 'user',
-                'content': PROMPT,
-                'images': [image],
-            }
-        ],
-        format='json',
-    )
+    client = get_client()
+    try:
+        response = client.chat(
+            model=MODEL,
+            messages=[
+                {
+                    'role': 'user',
+                    'content': PROMPT,
+                    'images': [image],
+                }
+            ],
+            format='json',
+            think=False,  # this is direct field transcription, not multi-step
+                          # reasoning - a reasoning-capable model spending
+                          # tokens on hidden chain-of-thought before writing
+                          # the JSON is pure added latency here
+            options={'temperature': 0},  # deterministic field transcription,
+                                          # not creative writing - also cuts
+                                          # down on the malformed-JSON retries
+                                          # seen in process.log, each of which
+                                          # costs a full extra call
+        )
+    except ResponseError as e:
+        if e.status_code == 429 and "weekly usage limit" in e.error.lower():
+            # Permanent for the rest of this week, not a transient rate
+            # limit - stop sending this key any more requests instead of
+            # letting every future call rediscover the same 429 (see
+            # api.py: mark_exhausted).
+            mark_exhausted(client)
+        raise
     text = response['message']['content']
 
     try:
@@ -704,7 +753,10 @@ def main():
     pages = []
     for pdf_path in glob.glob(os.path.join(INVOICE_DIR, '*.pdf')):
         try:
-            for page_num, image_bytes in enumerate(pdf_to_images(pdf_path), start=1):
+            for page_num, (image_bytes, blank) in enumerate(pdf_to_images(pdf_path), start=1):
+                if blank:
+                    logger.info(f"skipped (blank page, no OCR call): {os.path.basename(pdf_path)}#page{page_num}")
+                    continue
                 pages.append((pdf_path, page_num, image_bytes))
         except Exception:
             # A corrupt/unreadable PDF shouldn't take the whole batch down;
