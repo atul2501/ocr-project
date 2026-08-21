@@ -47,9 +47,6 @@ logger = logging.getLogger(__name__)
 
 PROMPT = (PROMPTS)
 
-# Single process-wide executor. Reused across the CLI batch run (main()) and
-# every API request (api.py) so concurrent OCR calls are always capped at
-# MAX_WORKERS instead of each caller spinning up its own pool.
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 
@@ -77,16 +74,6 @@ def save_sharpened_page(pdf_path: str, page_num: int, image_bytes: bytes) -> str
 
 
 def _is_blank_page(img: Image.Image) -> bool:
-    """True if this page has essentially no visible content - e.g. a
-    blank/near-blank scanned sheet carrying only faint scanner noise (dust
-    specks, a stray line) rather than real text. Must be checked on the raw
-    render, before sharpen_image's autocontrast step: autocontrast stretches
-    whatever tiny brightness variation exists on a blank page across the
-    full 0-255 range, which would make a blank page look artificially
-    content-rich if checked afterwards instead. A page like this fed to the
-    model anyway has been observed to make it hallucinate an entire
-    plausible-looking but fabricated invoice rather than correctly report
-    no content - excluding it here means it's never even asked."""
     histogram = img.convert('L').histogram()
     total = sum(histogram)
     ink_pixels = sum(histogram[:BLANK_PAGE_INK_THRESHOLD])
@@ -94,18 +81,6 @@ def _is_blank_page(img: Image.Image) -> bool:
 
 
 def pdf_to_images(pdf_path: str) -> list[tuple[bytes, bool]]:
-    """Returns (sharpened_image_bytes, is_blank) per page, in page order.
-    Blank pages are still rendered and saved to SHARPENED_DIR for debugging,
-    but callers should skip the OCR call entirely for them (see
-    process_page/main) rather than risk the model hallucinating content onto
-    a page that has none.
-
-    Builds the PIL image directly from the renderer's raw pixel buffer
-    (Image.frombytes) instead of round-tripping through PNG encode/decode -
-    the previous version encoded the page to PNG once, then decoded that
-    same PNG twice (once for the blank check, once again inside
-    sharpen_image) to build the same pixels back. Same output, ~100ms/page
-    less redundant codec work."""
     doc = pymupdf.open(pdf_path)
     matrix = pymupdf.Matrix(PDF_ZOOM, PDF_ZOOM)
     pages = []
@@ -122,11 +97,6 @@ def pdf_to_images(pdf_path: str) -> list[tuple[bytes, bool]]:
 
 
 def extract_receipt(image) -> list[dict]:
-    """Returns one raw extraction dict per invoice found on this page image -
-    almost always a single-element list, but a page can genuinely show more
-    than one separate invoice (e.g. two small bills photographed together),
-    and the prompt asks the model to return one array entry per invoice in
-    that case. Every entry is kept - none may be silently dropped."""
     client = get_client()
     try:
         response = client.chat(
@@ -139,22 +109,23 @@ def extract_receipt(image) -> list[dict]:
                 }
             ],
             format='json',
-            think=False,  # this is direct field transcription, not multi-step
-                          # reasoning - a reasoning-capable model spending
-                          # tokens on hidden chain-of-thought before writing
-                          # the JSON is pure added latency here
-            options={'temperature': 0},  # deterministic field transcription,
+            think=False,  
+            options={'temperature': 0},
                                           # not creative writing - also cuts
                                           # down on the malformed-JSON retries
                                           # seen in process.log, each of which
                                           # costs a full extra call
+            keep_alive='30m',  # keep the model loaded on the server between
+                                # requests instead of the (short) default -
+                                # process.log shows real gaps of 5-12+
+                                # minutes between batches during normal use,
+                                # long enough for a shared/free-tier host to
+                                # unload an idle model and pay a reload cost
+                                # on the next request ("first time it took
+                                # 1 min" is the signature of exactly this)
         )
     except ResponseError as e:
         if e.status_code == 429 and "weekly usage limit" in e.error.lower():
-            # Permanent for the rest of this week, not a transient rate
-            # limit - stop sending this key any more requests instead of
-            # letting every future call rediscover the same 429 (see
-            # api.py: mark_exhausted).
             mark_exhausted(client)
         raise
     text = response['message']['content']
@@ -167,9 +138,7 @@ def extract_receipt(image) -> list[dict]:
             raise ValueError(f"Model did not return valid JSON:\n{text}")
         parsed = json.loads(match.group(0))
 
-    # The model is asked for an array (one object per invoice on the page)
-    # but occasionally still returns a single bare object - normalize to a
-    # list either way, without ever discarding extra array entries.
+
     if isinstance(parsed, dict):
         parsed = [parsed]
     if not isinstance(parsed, list) or not parsed or not all(isinstance(p, dict) for p in parsed):
@@ -211,37 +180,20 @@ def _is_blank_value(value) -> bool:
 
 
 def is_blank_result(result: dict) -> bool:
-    """True if extraction found nothing usable - e.g. the page isn't a Tax
-    Invoice/PO (blank page, cover sheet, etc.) or the model echoed the empty
-    template back."""
     is_target = str(result.get("METADATA", {}).get("IS_TARGET_DOCUMENT", "")).strip().lower()
     if is_target and is_target != "true":
-        return True  # model explicitly marked this page as not a target document
+        return True
 
     return _is_blank_value(result)
 
 
 def _first_value(*values):
-    """Return the first non-blank value from a sequence of extracted
-    fields - several sections of the schema carry the same fact under
-    different keys (e.g. CUSTOMER.GSTIN vs GST_COMPLIANCE.CUSTOMER_GSTIN),
-    and the model doesn't always fill in the same one."""
     for v in values:
         if v not in ("", None):
             return v
     return ""
 
 
-# Named logistics/freight-related charges that each become their own row in
-# ITEM_LIST (e.g. "Weighment Charges") rather than a plain goods/service
-# line. Order matters when matching an ADDITIONAL_CHARGES description below:
-# most specific phrase first, since "LOADING" is itself a substring of
-# "UNLOADING", which is itself a substring of "EMPTY UNLOADING" - checking
-# in this order (and stopping at the first match per charge) means a
-# genuine "EMPTY UNLOADING" charge can never be misclassified as a plain
-# "LOADING" one. FREIGHT_AMOUNT has no field here: freight is the primary
-# billed service on a GTA bill, so it's already carried in ITEMS/ITEM_LIST,
-# and including it here too would double it up.
 _NAMED_CHARGE_FIELDS = [
     ("EMPTY_UNLOADING_CHARGES", ("EMPTY UNLOADING", "EMPTY UNLOAD")),
     ("UNLOADING_CHARGES", ("UNLOADING",)),
@@ -254,20 +206,6 @@ _NAMED_CHARGE_FIELDS = [
 
 
 def _item_fingerprint(item: "InvoiceItem") -> tuple:
-    """Cross-page merge dedup key for one ITEM_LIST row (see
-    group_into_invoices). For a normal goods/service row (from ITEMS),
-    DESCRIPTION is excluded - it's the field most likely to come back
-    slightly different between two OCR passes of the same printed line, so
-    matching is done on the numeric/code fields alone (HSN, QTY, UNIT_PRICE,
-    AMOUNT, VEHICLE_NUMBER). A row built by _build_charge_items (a named
-    logistics charge like "Weighment Charges") always has blank
-    HSN/QTY/UNIT_PRICE/VEHICLE_NUMBER, so without DESCRIPTION two different
-    charge types that happen to carry the same AMOUNT (e.g. Parking=500 and
-    Loading=500) would fingerprint identically and one would be wrongly
-    dropped as a duplicate. DESCRIPTION is safe to include for these rows
-    specifically because it's generated by code (a fixed label per charge
-    type), not OCR'd, so it carries none of the variance the exclusion
-    exists to tolerate."""
     is_charge_row = not item.HSN and item.QTY == 0.0 and item.UNIT_PRICE == 0.0 and not item.VEHICLE_NUMBER
     if is_charge_row:
         return (item.DESCRIPTION, item.AMOUNT)
@@ -278,13 +216,6 @@ _PAN_PATTERN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 
 
 def _pan_from_gstin(gstin: str) -> str:
-    """Derive the 10-character PAN embedded in a GSTIN's characters 3-12 -
-    this is a mechanical substring of a value already fully printed on the
-    page (GSTIN = 2-digit state code + PAN + 1-digit entity code + "Z" + 1
-    checksum char), not a guess, so it's safe to fill in even on invoices
-    that print the GSTIN but never print the PAN by itself. Relying on this
-    instead of whatever the model happened to extract for PAN also avoids
-    the inconsistency of the model deriving it on some pages but not others."""
     gstin = (gstin or "").strip().upper()
     if len(gstin) != 15 or gstin[13] != "Z":
         return ""
@@ -296,17 +227,6 @@ _PLACE_OF_SUPPLY_PATTERN = re.compile(r"^\s*(\d{1,2})\s*[-–:]?\s*(.*)$")
 
 
 def _split_place_of_supply(document: dict, gst_compliance: dict) -> tuple[str, str]:
-    """Split the combined "27- MAHARASHTRA"-style Place of Supply value the
-    model returns into its numeric GST state code and state name - SAP
-    wants these as two separate fields (PLACE_OF_SUPPLY_CODE,
-    PLACE_OF_SUPPLY_STATE). GST_COMPLIANCE has its own dedicated
-    PLACE_OF_SUPPLY_STATE_CODE raw field - prefer that for the code when the
-    model filled it in directly (unambiguous), otherwise fall back to the
-    leading digits parsed off the combined text. There's no dedicated raw
-    field for the state name alone, so it's always parsed out of the
-    combined DOCUMENT.PLACE_OF_SUPPLY / GST_COMPLIANCE.PLACE_OF_SUPPLY text,
-    which is almost always printed as "<code>-<state name>" or "<code> -
-    <state name>"."""
     raw = _first_value(document.get("PLACE_OF_SUPPLY"), gst_compliance.get("PLACE_OF_SUPPLY"))
     match = _PLACE_OF_SUPPLY_PATTERN.match(raw) if raw else None
     parsed_code = match.group(1) if match else ""
@@ -316,9 +236,6 @@ def _split_place_of_supply(document: dict, gst_compliance: dict) -> tuple[str, s
 
 
 def _to_float(value) -> float:
-    """Parse an extracted amount/quantity string into a real number for
-    SAP - "", None or anything unparseable becomes 0 (SAP's DEC/NUMC fields
-    expect an actual number, never a missing key or null)."""
     if value in ("", None):
         return 0.0
     if isinstance(value, (int, float)):
@@ -333,14 +250,6 @@ def _to_float(value) -> float:
 
 
 def _named_charge_amounts(data: dict) -> dict[str, float]:
-    """Map each of the fixed named logistics/freight charge types (see
-    _NAMED_CHARGE_FIELDS) to its amount. Prefers an explicit LOGISTICS.<field>
-    value (unambiguous), falling back to scanning ADDITIONAL_CHARGES by
-    description keyword - the model sometimes reports the same charge as a
-    described ADDITIONAL_CHARGES row instead of filling the matching
-    LOGISTICS field. Each ADDITIONAL_CHARGES entry is classified into at
-    most one of these fields (first match wins, in _NAMED_CHARGE_FIELDS
-    order), so one charge can't double-count into two fields that way."""
     logistics = data.get("LOGISTICS", {})
     charges = {name: _to_float(logistics.get(name, "")) for name, _ in _NAMED_CHARGE_FIELDS}
 
@@ -353,16 +262,6 @@ def _named_charge_amounts(data: dict) -> dict[str, float]:
                 charges[name] = _to_float(_first_value(charge.get("AMOUNT"), charge.get("TOTAL_AMOUNT")))
                 break
 
-    # LOGISTICS itself can carry the same duplication risk the classifier
-    # above guards against: EMPTY_UNLOADING_CHARGES, UNLOADING_CHARGES and
-    # LOADING_CHARGES are separate raw keys, so the model can (and does)
-    # fill more than one of them with the same amount for what is really a
-    # single printed "EMPTY UNLOADING CHARGES" line - the substring overlap
-    # between these three names ("LOADING" sits inside "UNLOADING" sits
-    # inside "EMPTY UNLOADING") makes them the specific fields prone to this,
-    # not a generic risk across all seven. If two of them carry the exact
-    # same non-zero amount, keep only the most specific one (this list's
-    # order) and zero the rest, rather than trusting a coincidence.
     loading_family = ["EMPTY_UNLOADING_CHARGES", "UNLOADING_CHARGES", "LOADING_CHARGES"]
     for i, name in enumerate(loading_family):
         if not charges[name]:
@@ -375,11 +274,6 @@ def _named_charge_amounts(data: dict) -> dict[str, float]:
 
 
 def _build_charge_items(data: dict) -> list["InvoiceItem"]:
-    """Build one ITEM_LIST row per named logistics/freight charge type (see
-    _NAMED_CHARGE_FIELDS) that carries a non-zero amount - e.g. a
-    "Weighment Charges" row alongside the billed goods/service, matching how
-    SAP itself lines up every charge as its own item rather than a
-    header-level surcharge field."""
     charges = _named_charge_amounts(data)
     return [
         InvoiceItem(DESCRIPTION=name.replace("_", " ").title(), AMOUNT=amount)
@@ -388,11 +282,6 @@ def _build_charge_items(data: dict) -> list["InvoiceItem"]:
     ]
 
 
-# Vendor-name keywords that mark this supplier as a transport/logistics
-# company - a company registered under a name like this is freight/shipping
-# by trade even on an invoice with no vehicle number, weight or named
-# logistics charge of its own (e.g. a pure container-handling/agency-fee
-# bill), unlike a generic goods vendor that happens to ship its own product.
 _FREIGHT_VENDOR_KEYWORDS = (
     "LOGISTICS", "TRANSPORT", "SHIPPING", "FREIGHT", "CARGO",
     "FORWARDING", "CARRIER", "FLEET", "COURIER",
@@ -400,28 +289,7 @@ _FREIGHT_VENDOR_KEYWORDS = (
 
 
 def _label_freight_items(
-    item_list: list["InvoiceItem"], primary_item_count: int, vehicle_number: str, vendor_name: str
-) -> None:
-    """Prefix each primary billed item's DESCRIPTION with "Freight Charges -"
-    when this invoice looks like a GTA/transport/freight bill, so the
-    freight line reads as freight at a glance even when the vendor's own
-    printed wording doesn't use that word (e.g. "20' Import Fixed",
-    "Container handling services..."). Never replaces or discards the
-    original printed text - only prepends a label in front of it, and only
-    when "freight" isn't already present in it, so nothing printed is lost
-    or altered.
-
-    This is a deterministic label computed from data already extracted, not
-    a value asked of the model - it carries none of the hallucination risk
-    that would come from asking the model itself to invent wording that
-    isn't on the page. "Looks like a freight bill" reuses signals already
-    trusted elsewhere in this file rather than a new guess: a printed
-    vehicle number (this invoice's own, or a per-row one), a named
-    logistics charge (weighment/detention/parking/...) alongside the
-    primary item, a per-row weight, or a vendor name that identifies the
-    supplier as a transport/logistics company (see _FREIGHT_VENDOR_KEYWORDS
-    - covers a pure container-handling/agency-fee bill with none of the
-    other signals, e.g. no vehicle number of its own)."""
+    item_list: list["InvoiceItem"], primary_item_count: int, vehicle_number: str, vendor_name: str) -> None:
     primary_items = item_list[:primary_item_count]
     if not primary_items:
         return
@@ -434,11 +302,6 @@ def _label_freight_items(
     if not is_freight_bill:
         return
     for item in primary_items:
-        # Word-boundary match, not a plain substring check - a company name
-        # like "THE FREIGHTERS LINE" contains "freight" as a substring
-        # without the description actually saying "freight" as a word, and
-        # a plain `"freight" in description.lower()` check would wrongly
-        # treat that as already labeled.
         if not re.search(r"\bfreight\b", item.DESCRIPTION, re.IGNORECASE):
             item.DESCRIPTION = f"Freight Charges - {item.DESCRIPTION}" if item.DESCRIPTION else "Freight Charges"
 
