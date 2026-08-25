@@ -1,71 +1,96 @@
-import glob
-import json
+import itertools
 import os
-from concurrent.futures import ThreadPoolExecutor
-from tempfile import NamedTemporaryFile
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from main import (
-    INVOICE_DIR,
-    MAX_WORKERS,
-    OUTPUT_PATH,
-    logger,
-    pdf_to_images,
-    process_page,
-)
+import threading
 
-app = FastAPI(title="Receipt OCR API")
+from ollama import Client
 
-@app.get("/")
-def root():
-    return {
-        "message": "Receipt OCR API is running. See /docs for interactive testing.",
-        "endpoints": ["/health", "POST /extract", "POST /extract/binary"],
-    }
+HOST = 'https://ollama.com'
+KEY_ENV_PREFIX = 'OLLAMA_API_KEY_'
+
+MODEL = 'minimax-m3'  
+
+INVOICE_DIR = 'invoice'
+PDF_ZOOM = 2
+OUTPUT_PATH = 'out.json'
+LOG_PATH = 'process.log'
+SHARPENED_DIR = 'output'
+SAVE_DEBUG_PAGES = False
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+API_KEYS = [
+            'a02fc9d9ca954e8f8e801031d741a9f4.8YkE0poV42BUpJM5aSdcpERx',
+            '5c142e3dddbe4c00af461beb686cfd36.qA5pDYNm0V79DCnjL7mXV6Gy',
+            '08cd689726cb40169543db1ac28fe0e2.silxzK-S0NjozIFgWon0Gyx9',
+            'bfb4bf4cdef8469c8841ba02e1d30b0b.dzIH64NMy-F0m6AxZ1h9mB_q',
+            'b3e6113f430b40adb69af4250e92013e.V3erJlkPIvn5J_Hnh_whesfJ',
+            'cc76568fb2e040988cf13671da7b9d19.RcuniqYYf7DpS8xqgeOP1gRt',
+            'dd633d6cc5754397a5fe335fce8e7e8a.xV0UoGbMFC2xP332Y-Q2rlme',
+            '84a4197f524a430188e998fd9255f41b.6Dwy42j1n653P0OlOoPQovmK',
+            '0e79c0347e2945428054bb16a743db0f.exH-Kxg7zCG7PUrlO7-KxpFi',
+            '59d963bc579f4d9b8020c739dadbf798.sLp5W442w8ctn4KptTzcT5TU',
+            '05bdcd9506cf413995102efc4c27a2ca.1b8-iPCwnBg1lJmccND9w0YZ',
+            'a96c2d79ded643caa217bbc0c185796d.-R6IC1WvWzARUphYcpMZ5mUJ',  
+            ]
+
+MAX_WORKERS = 10 
+MAX_RETRIES = 2
+RETRY_BACKOFF_BASE = 2
+RETRY_BACKOFF_CAP = 30
+RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+
+SHARPEN_RADIUS = 2
+SHARPEN_PERCENT = 200
+SHARPEN_THRESHOLD = 1
+CONTRAST_CUTOFF = 1  
 
 
-async def _process_pdf(pdf_bytes: bytes):
-    with NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(pdf_bytes)
-        tmp_path = tmp.name
+BLANK_PAGE_INK_THRESHOLD = 200
+BLANK_PAGE_INK_FRACTION = 0.0005
 
-    try:
-        pages = list(enumerate(pdf_to_images(tmp_path), start=1))
-        results = []
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = executor.map(
-                lambda p: process_page(tmp_path, p[0], p[1]), pages
-            )
-            for key, result in futures:
-                results.append(result)
-                logger.info(f"done: {key}")
-    finally:
-        os.remove(tmp_path)
-
-    return results
+_lock = threading.Lock()
 
 
-@app.post("/extract")
-async def extract(file: UploadFile = File(...)):
-    """Upload a single PDF (Postman: form-data, key 'file', type File) and get its extracted JSON back."""
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+def _load_keys() -> list[str]:
+    keys = []
+    i = 1
+    while True:
+        named_key = API_KEYS[i - 1] if i <= len(API_KEYS) else None
+        key = os.environ.get(f"{KEY_ENV_PREFIX}{i}") or named_key
+        if not key:
+            if i <= len(API_KEYS):
+                i += 1
+                continue
+            break
+        keys.append(key)
+        i += 1
+    if not keys:
+        raise RuntimeError(
+            "No Ollama API keys found. Add at least one to API_KEYS in api.py, "
+            f"or set {KEY_ENV_PREFIX}1, {KEY_ENV_PREFIX}2, ... in the environment."
+        )
+    return keys
 
-    pdf_bytes = await file.read()
-    return await _process_pdf(pdf_bytes)
+
+_clients = [Client(host=HOST, headers={'Authorization': f"Bearer {key}"}) for key in _load_keys()]
+_clients_cycle = itertools.cycle(range(len(_clients)))
 
 
-@app.post("/extract/binary")
-async def extract_binary(request: Request):
-    """Upload a single PDF (Postman: Body > binary) and get its extracted JSON back."""
-    pdf_bytes = await request.body()
-    if not pdf_bytes:
-        raise HTTPException(status_code=400, detail="Empty request body")
-    if not pdf_bytes.startswith(b"%PDF-"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+_dead_clients: set[int] = set()
 
-    return await _process_pdf(pdf_bytes)
+
+def get_client() -> Client:
+    with _lock:
+        for _ in range(len(_clients)):
+            index = next(_clients_cycle)
+            if index not in _dead_clients:
+                return _clients[index]
+    raise RuntimeError("All configured Ollama API keys have hit their weekly usage limit.")
+
+
+def mark_exhausted(client: Client) -> None:
+    with _lock:
+        try:
+            index = _clients.index(client)
+        except ValueError:
+            return
+        _dead_clients.add(index)
