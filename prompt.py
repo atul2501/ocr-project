@@ -217,6 +217,13 @@ after careful re-reading, return an empty string "" rather than a guess:
 - Email: must match name@domain.tld with no spaces; re-check characters that could
   be letter/digit confusions before returning.
 
+  - CASH_DISCOUNT: If an invoice-level "Cash Discount", "Discount", or
+  "Trade Discount" is explicitly printed, extract the actual discount
+  amount into "AMOUNTS.CASH_DISCOUNT". Do not put it in "ITEMS" or
+  "ADDITIONAL_CHARGES". If multiple numbers appear on the discount row,
+  use the actual monetary discount amount, not the rate/base value.
+  Do not calculate it. If no discount is printed, return "".
+
 Return exactly this JSON structure - one such object per invoice found on
 the page, wrapped in an array as described above:
 
