@@ -285,6 +285,7 @@ the page, wrapped in an array as described above:
 
   "AMOUNTS": {
     "SUBTOTAL": "",
+    "CASH_DISCOUNT": "",
     "TAXABLE_AMOUNT": "",
     "TOTAL_AMOUNT": ""
   },
