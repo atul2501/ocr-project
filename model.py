@@ -426,6 +426,7 @@ class Invoice:
             PLACE_OF_SUPPLY_CODE=place_of_supply_code,
             PLACE_OF_SUPPLY_STATE=place_of_supply_state,
             BASE_VALUE=base_value,
+            CASH_DISCOUNT=_to_float(amounts.get("CASH_DISCOUNT", "")),
             IGST=_to_float(tax.get("IGST_AMOUNT", "")),
             CGST=_to_float(tax.get("CGST_AMOUNT", "")),
             SGST=_to_float(tax.get("SGST_AMOUNT", "")),
