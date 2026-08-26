@@ -350,6 +350,7 @@ class Invoice:
     PLACE_OF_SUPPLY_CODE: str = ""
     PLACE_OF_SUPPLY_STATE: str = ""
     BASE_VALUE: float = 0.0
+    CASH_DISCOUNT: float = 0.0
     IGST: float = 0.0
     CGST: float = 0.0
     SGST: float = 0.0
