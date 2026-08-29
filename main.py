@@ -71,7 +71,7 @@ async def _process_pdf(pdf_bytes: bytes):
 
     invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
     output = [invoice.to_dict() for invoice in invoices]
-    return output
+    return output[0]
 
 
 
