@@ -1,0 +1,12 @@
+2026-09-01 12:38:11,155 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-09-01 12:38:11,160 INFO done: tmprsea9rxb.pdf#page2 (1 invoice(s))
+2026-09-01 12:38:12,731 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-09-01 12:38:12,733 INFO done: tmprsea9rxb.pdf#page3 (1 invoice(s))
+2026-09-01 12:38:18,133 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-09-01 12:38:18,143 INFO done: tmprsea9rxb.pdf#page1 (1 invoice(s))
+2026-09-01 12:40:07,171 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-09-01 12:40:07,174 INFO done: tmpxuwoc_fk.pdf#page1 (1 invoice(s))
+2026-09-01 12:40:10,762 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-09-01 12:40:10,765 INFO done: tmpxuwoc_fk.pdf#page2 (1 invoice(s))
+2026-09-01 12:40:12,290 INFO HTTP Request: POST https://ollama.com/api/chat "HTTP/1.1 200 OK"
+2026-09-01 12:40:12,293 INFO done: tmpxuwoc_fk.pdf#page3 (1 invoice(s))

@@ -10,7 +10,7 @@ KEY_ENV_PREFIX = 'OLLAMA_API_KEY_'
 MODEL = 'gemma4:31b'          #'minimax-m3'  
 
 INVOICE_DIR = 'invoice'
-PDF_ZOOM = 2
+PDF_ZOOM = 3
 OUTPUT_PATH = 'out.json'
 LOG_PATH = 'process.log'
 SHARPENED_DIR = 'output'

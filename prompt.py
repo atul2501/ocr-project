@@ -223,6 +223,15 @@ after careful re-reading, return an empty string "" rather than a guess:
   "ADDITIONAL_CHARGES". If multiple numbers appear on the discount row,
   use the actual monetary discount amount, not the rate/base value.
   Do not calculate it. If no discount is printed, return "".
+- AMOUNTS.TOTAL_AMOUNT_IN_WORDS: many Indian invoices spell out the total
+  in words near the bottom of the page (e.g. "Total Invoice Amount in
+  Words: Rupees Fifty Three Lac Ten Thousand Only", "Amount in Words:
+  Rupees ..."). Copy that phrase exactly as printed, including "Rupees"
+  and "Only" if present. This is a separate field read independently from
+  the numeral total, so re-read it carefully on its own rather than
+  assuming it matches whatever numeral you already extracted - it is used
+  to catch cases where a numeral's digit count was misread. If no such
+  phrase is printed, return "".
 
 Return exactly this JSON structure - one such object per invoice found on
 the page, wrapped in an array as described above:
@@ -294,7 +303,8 @@ the page, wrapped in an array as described above:
     "SUBTOTAL": "",
     "CASH_DISCOUNT": "",
     "TAXABLE_AMOUNT": "",
-    "TOTAL_AMOUNT": ""
+    "TOTAL_AMOUNT": "",
+    "TOTAL_AMOUNT_IN_WORDS": ""
   },
 
   "LOGISTICS": {

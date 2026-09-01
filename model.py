@@ -2,6 +2,7 @@ import glob
 import io
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -249,6 +250,88 @@ def _to_float(value) -> float:
         return 0.0
 
 
+_ONES_WORDS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19,
+}
+_TENS_WORDS = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_SCALE_WORDS = {
+    "thousand": 1_000,
+    "lac": 100_000, "lacs": 100_000, "lakh": 100_000, "lakhs": 100_000,
+    "crore": 10_000_000, "crores": 10_000_000,
+}
+_WORDS_TO_NUMBER_IGNORED = {"rupees", "rupee", "rs", "inr", "and", "only"}
+_WORDS_TO_NUMBER_STOP = {"paise", "paisa", "paisas", "point", "cents", "cent"}
+
+
+def _words_to_number(text: str) -> float | None:
+    """Parses an Indian-numbering-system amount-in-words phrase (e.g.
+    "Rupees Fifty Three Lac Ten Thousand Only") into a number. Stops at the
+    paise/fractional part if present - only the whole-rupee amount is used
+    for cross-checking against GROSS_TOTAL. Returns None on anything that
+    doesn't look like a clean words-number (empty text, an unrecognized
+    word) rather than guessing, since a failed parse should just skip the
+    cross-check rather than risk a bogus correction."""
+    if not text:
+        return None
+    tokens = re.findall(r"[a-zA-Z]+", text.lower())
+    total = 0
+    current = 0
+    matched = False
+    for word in tokens:
+        if word in _WORDS_TO_NUMBER_STOP:
+            break
+        if word in _WORDS_TO_NUMBER_IGNORED:
+            continue
+        if word in _ONES_WORDS:
+            current += _ONES_WORDS[word]
+            matched = True
+        elif word in _TENS_WORDS:
+            current += _TENS_WORDS[word]
+            matched = True
+        elif word == "hundred":
+            current = (current or 1) * 100
+            matched = True
+        elif word in _SCALE_WORDS:
+            total += (current or 1) * _SCALE_WORDS[word]
+            current = 0
+            matched = True
+        else:
+            return None
+    total += current
+    return float(total) if matched else None
+
+
+_SCALE_CORRECTION_FACTORS = (0.001, 0.01, 0.1, 10, 100, 1000)
+
+
+def _scale_factor(words_total: float | None, gross_total: float) -> float | None:
+    """A vision-model misread that drops or adds a trailing zero on a large
+    printed amount (e.g. reading Rs.45,00,000 as Rs.4,50,000) scales every
+    numeral-derived money field on the invoice by the same power of ten, so
+    checking the numerals' arithmetic against each other (tax-rate, sum)
+    can't catch it - it still adds up internally. The amount-in-words is
+    read independently from different text on the page and doesn't share
+    that failure mode, so when it disagrees with GROSS_TOTAL by a clean
+    order of magnitude, that mismatch is the signature of exactly this bug.
+    Returns the correction factor to bring the numerals in line with the
+    words, or None if they already agree, the words couldn't be parsed, or
+    the mismatch isn't a clean power-of-ten (too risky to auto-correct)."""
+    if not words_total or not gross_total:
+        return None
+    ratio = words_total / gross_total
+    for factor in _SCALE_CORRECTION_FACTORS:
+        if math.isclose(ratio, factor, rel_tol=0.01):
+            return factor
+    return None
+
+
 def _named_charge_amounts(data: dict) -> dict[str, float]:
     logistics = data.get("LOGISTICS", {})
     charges = {name: _to_float(logistics.get(name, "")) for name, _ in _NAMED_CHARGE_FIELDS}
@@ -382,11 +465,11 @@ class Invoice:
         _label_freight_items(item_list, primary_item_count, vehicle_number, vendor_name)
         place_of_supply_code, place_of_supply_state = _split_place_of_supply(document, gst_compliance)
         gross_total = _to_float(amounts.get("TOTAL_AMOUNT", ""))
-        total_tax = (
-            _to_float(tax.get("IGST_AMOUNT", ""))
-            + _to_float(tax.get("CGST_AMOUNT", ""))
-            + _to_float(tax.get("SGST_AMOUNT", ""))
-        )
+        cash_discount = _to_float(amounts.get("CASH_DISCOUNT", ""))
+        igst = _to_float(tax.get("IGST_AMOUNT", ""))
+        cgst = _to_float(tax.get("CGST_AMOUNT", ""))
+        sgst = _to_float(tax.get("SGST_AMOUNT", ""))
+        total_tax = igst + cgst + sgst
 
         if total_tax == 0 and gross_total:
             # No GST is charged on this invoice, so the taxable value is by
@@ -410,6 +493,24 @@ class Invoice:
                 else _to_float(base_value_raw)
             )
 
+        words_total = _words_to_number(amounts.get("TOTAL_AMOUNT_IN_WORDS", ""))
+        scale = _scale_factor(words_total, gross_total)
+        if scale is not None:
+            logger.warning(
+                f"amount-in-words disagreed with GROSS_TOTAL by {scale}x on "
+                f"invoice {document.get('INVOICE_NUMBER', '?')} - rescaling "
+                f"numeral amounts to match the words total"
+            )
+            base_value *= scale
+            cash_discount *= scale
+            igst *= scale
+            cgst *= scale
+            sgst *= scale
+            gross_total = words_total
+            for item in item_list:
+                item.UNIT_PRICE *= scale
+                item.AMOUNT *= scale
+
         return cls(
             IRN_NO=gst_compliance.get("IRN", ""),
             IRN_DATE=gst_compliance.get("ACKNOWLEDGEMENT_DATE", ""),
@@ -426,11 +527,11 @@ class Invoice:
             PLACE_OF_SUPPLY_CODE=place_of_supply_code,
             PLACE_OF_SUPPLY_STATE=place_of_supply_state,
             BASE_VALUE=base_value,
-            CASH_DISCOUNT=_to_float(amounts.get("CASH_DISCOUNT", "")),
-            IGST=_to_float(tax.get("IGST_AMOUNT", "")),
-            CGST=_to_float(tax.get("CGST_AMOUNT", "")),
-            SGST=_to_float(tax.get("SGST_AMOUNT", "")),
-            GROSS_TOTAL=_to_float(amounts.get("TOTAL_AMOUNT", "")),
+            CASH_DISCOUNT=cash_discount,
+            IGST=igst,
+            CGST=cgst,
+            SGST=sgst,
+            GROSS_TOTAL=gross_total,
             INVOICE_DATE=document.get("INVOICE_DATE", ""),
             ORDER_DATE=purchase_order.get("PO_DATE", ""),
             VENDOR_PAN_NO=_first_value(supplier.get("PAN"), _pan_from_gstin(supplier.get("GSTIN", ""))),
