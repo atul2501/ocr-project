@@ -133,7 +133,16 @@ IMPORTANT EXTRACTION RULES:
   either one.
 - Extract Indian GSTIN, PAN, CIN and other statutory identifiers when visible.
 - Read clearly visible handwritten information, but do not guess unclear handwriting.
-- Keep dates in DD.MM.YYYY format when unambiguous.
+- Every date value anywhere in the JSON output (INVOICE_DATE, PO_DATE,
+  ACKNOWLEDGEMENT_DATE and any other date field) must be formatted as
+  DD-MM-YYYY only - two-digit day, two-digit month, four-digit year,
+  separated by hyphens (e.g. "06-08-2025"). If the date is printed in a
+  different format (e.g. "6/8/2025", "06.08.2025", "2025-08-06",
+  "6th Aug 2025"), convert it to DD-MM-YYYY as long as the day/month/year
+  are unambiguous from the page. Never output a date in any other format
+  (no dots, no slashes, no year-first order, no month names). If the date
+  is ambiguous or you cannot confidently determine day/month/year, return
+  an empty string "" rather than guessing.
 - Use numeric values for quantities, rates, taxes and amounts when clearly readable.
 - Every amount/quantity/rate field (QUANTITY, WEIGHT, UNIT_PRICE, RATE,
   LINE_TOTAL, AMOUNT, TOTAL_AMOUNT, every *_AMOUNT under TAX, and every
