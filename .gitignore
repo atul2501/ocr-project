@@ -1,0 +1,4 @@
+.venv
+*.log
+out_*.json
+output/

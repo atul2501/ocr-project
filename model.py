@@ -49,6 +49,73 @@ PROMPT = (PROMPTS)
 
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
+CLASSIFY_PROMPT = """
+Determine whether this page is a GST Tax Invoice or a Purchase Order (PO),
+for Indian Accounts Payable processing.
+
+A page counts as a Tax Invoice if it has ALL of: the issuing party's GSTIN,
+its own invoice number/reference, identification of who it is billed to, one
+or more itemized charges/amounts, and a total amount payable. This includes
+GTA/transporter/logistics bills headed "BILL" or "FREIGHT BILL" (not just
+"TAX INVOICE") even if no CGST/SGST/IGST is shown (common under GST reverse
+charge) - as long as it still has its own invoice number and identifies the
+customer.
+
+A page is NOT a Tax Invoice if it has no invoice number of its own AND no
+customer/buyer identification of its own - even if it shows a vendor GSTIN
+and an itemized cost table with a subtotal/total (e.g. a tooling/parts
+annexure page from a later page of the same invoice booklet).
+
+Exception: an e-Way Bill copy showing an "IRN Details" block with an Ack
+Date counts as a target page too (even though it is not itself a Tax
+Invoice), because that Ack Date and the referenced invoice number belong to
+a Tax Invoice that may not print that date on its own page.
+
+A Purchase Order (PO) also counts as a target document.
+
+Any other document type (delivery challan, LR/weighment/transporter receipt
+with no amount payable, warehouse/storage paperwork, packing list, plain
+e-Way Bill copy with no IRN Details block, bank statement, or anything else)
+is NOT a target document.
+
+Look at the whole page carefully before deciding - do not guess from a quick
+glance. If genuinely unsure, answer true (a full extraction pass will sort
+it out) rather than guessing false and risking a real invoice being skipped.
+
+Return ONLY this JSON object, nothing else:
+{"IS_TARGET_DOCUMENT": true or false}
+"""
+
+
+def classify_page(image: bytes) -> bool:
+    """Cheap pre-filter run before the full (expensive, ~17KB prompt)
+    extraction pass - decides whether this page is even worth extracting.
+    Fails open: any error, malformed response, or missing/unrecognized
+    field returns True (run the full extraction) rather than False, so a
+    classifier mistake can only cost extra time, never silently drop a real
+    invoice. Only a confident, well-formed "false" skips extraction."""
+    client = get_client()
+    start = time.monotonic()
+    try:
+        response = client.chat(
+            model=MODEL,
+            messages=[{'role': 'user', 'content': CLASSIFY_PROMPT, 'images': [image]}],
+            format='json',
+            think=False,
+            options={'temperature': 0},
+            keep_alive='30m',
+        )
+    except Exception as e:
+        logger.info(f"classify call failed after {time.monotonic() - start:.1f}s ({type(e).__name__}) - defaulting to full extraction")
+        return True
+    logger.info(f"classify call took {time.monotonic() - start:.1f}s")
+    try:
+        parsed = json.loads(response['message']['content'])
+        value = str(parsed.get('IS_TARGET_DOCUMENT', True)).strip().lower()
+        return value != 'false'
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return True
+
 
 def sharpen_image(img: Image.Image) -> bytes:
     gray = ImageOps.autocontrast(img.convert('L'), cutoff=CONTRAST_CUTOFF)
@@ -98,6 +165,7 @@ def pdf_to_images(pdf_path: str) -> list[tuple[bytes, bool]]:
 
 def extract_receipt(image) -> list[dict]:
     client = get_client()
+    start = time.monotonic()
     try:
         response = client.chat(
             model=MODEL,
@@ -109,7 +177,7 @@ def extract_receipt(image) -> list[dict]:
                 }
             ],
             format='json',
-            think=False,  
+            think=False,
             options={'temperature': 0},
                                           # not creative writing - also cuts
                                           # down on the malformed-JSON retries
@@ -125,9 +193,11 @@ def extract_receipt(image) -> list[dict]:
                                 # 1 min" is the signature of exactly this)
         )
     except ResponseError as e:
+        logger.info(f"ollama call failed after {time.monotonic() - start:.1f}s (status {e.status_code})")
         if e.status_code == 429 and "weekly usage limit" in e.error.lower():
             mark_exhausted(client)
         raise
+    logger.info(f"ollama call took {time.monotonic() - start:.1f}s")
     text = response['message']['content']
 
     try:
@@ -221,6 +291,48 @@ def _pan_from_gstin(gstin: str) -> str:
         return ""
     candidate = gstin[2:12]
     return candidate if _PAN_PATTERN.match(candidate) else ""
+
+
+_GSTIN_CHECKSUM_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def _gstin_checksum_ok(gstin: str) -> bool | None:
+    """Validates a GSTIN's trailing character against the standard mod-36
+    checksum computed from its own first 14 characters - a free, purely
+    local, deterministic check (no model call) that catches an OCR misread
+    of any single character (glyph-confusion pairs like O/0, 1/I, 5/S are
+    exactly what flip this checksum) without ever needing a second look at
+    the source image. Returns None - "not checkable" rather than "invalid"
+    - for a blank value or one that isn't even 15 GSTIN-alphabet characters,
+    since that's a different failure mode than a wrong checksum digit."""
+    gstin = (gstin or "").strip().upper()
+    if len(gstin) != 15 or any(c not in _GSTIN_CHECKSUM_CHARSET for c in gstin):
+        return None
+    total = 0
+    factor = 1
+    for ch in gstin[:14]:
+        product = _GSTIN_CHECKSUM_CHARSET.index(ch) * factor
+        total += (product // 36) + (product % 36)
+        factor = 2 if factor == 1 else 1
+    expected = _GSTIN_CHECKSUM_CHARSET[(36 - (total % 36)) % 36]
+    return gstin[14] == expected
+
+
+def check_invoice_gstins(invoice: "Invoice") -> None:
+    """Logs a warning for any GSTIN on this invoice that fails checksum
+    validation, so a misread character (see _gstin_checksum_ok) surfaces
+    for manual review instead of silently reaching SAP. Never modifies or
+    drops the value - a bad checksum could stem from any of the 15
+    characters being misread, not necessarily the last one, so guessing a
+    "corrected" value here would just trade one unverified value for
+    another."""
+    for label, value in (("VENDOR_GST_NO", invoice.VENDOR_GST_NO), ("CUSTOMER_GST_NO", invoice.CUSTOMER_GST_NO)):
+        if _gstin_checksum_ok(value) is False:
+            logger.warning(
+                f"{label} failed checksum validation on invoice "
+                f"{invoice.INVOICE_NUMBER!r}: {value!r} - likely an OCR "
+                f"misread (e.g. O/0, 1/I, 5/S, 8/B) - needs manual review"
+            )
 
 
 _PLACE_OF_SUPPLY_PATTERN = re.compile(r"^\s*(\d{1,2})\s*[-–:]?\s*(.*)$")
@@ -653,6 +765,9 @@ def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str,
     invoices)."""
     key = f"{os.path.basename(pdf_path)}#page{page_num}"
     try:
+        if not classify_page(image_bytes):
+            logger.info(f"skipped (pre-filter: not a target document, full extraction call skipped): {key}")
+            return key, []
         return key, extract_receipt_with_retry(image_bytes)
     except Exception as e:
         # logger.exception (not .error) so the full traceback lands in
@@ -695,6 +810,8 @@ def main():
         logger.info(f"done: {key} ({len(kept)} invoice(s))")
 
     invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
+    for inv in invoices:
+        check_invoice_gstins(inv)
     output = [invoice.to_dict() for invoice in invoices]
 
     try:

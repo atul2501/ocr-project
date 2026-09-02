@@ -1,12 +1,10 @@
 import asyncio
-import glob
-import json
 import os
+import time
 from tempfile import NamedTemporaryFile
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from model import (
-    INVOICE_DIR,
-    OUTPUT_PATH,
+    check_invoice_gstins,
     executor,
     group_into_invoices,
     is_blank_invoice,
@@ -31,14 +29,20 @@ def health():
     return {"status": "Sucess"}
 
 async def _process_pdf(pdf_bytes: bytes):
+    request_start = time.monotonic()
     with NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(pdf_bytes)
         tmp_path = tmp.name
 
     try:
         loop = asyncio.get_running_loop()
+        render_start = time.monotonic()
         rendered = await loop.run_in_executor(
             None, lambda: list(enumerate(pdf_to_images(tmp_path), start=1))
+        )
+        logger.info(
+            f"rendered {os.path.basename(tmp_path)}: {len(rendered)} page(s) in "
+            f"{time.monotonic() - render_start:.1f}s"
         )
         pages = []
         for page_num, (image_bytes, blank) in rendered:
@@ -70,7 +74,10 @@ async def _process_pdf(pdf_bytes: bytes):
         os.remove(tmp_path)
 
     invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
+    for inv in invoices:
+        check_invoice_gstins(inv)
     output = [invoice.to_dict() for invoice in invoices]
+    logger.info(f"total request time for {source_id}: {time.monotonic() - request_start:.1f}s")
     return output
 
 

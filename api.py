@@ -7,7 +7,7 @@ from ollama import Client
 HOST = 'https://ollama.com'
 KEY_ENV_PREFIX = 'OLLAMA_API_KEY_'
 
-MODEL = 'minimax-m3'  
+MODEL = 'minimax-m3'
 
 INVOICE_DIR = 'invoice'
 PDF_ZOOM = 2
