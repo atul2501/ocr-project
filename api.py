@@ -1,4 +1,3 @@
-import itertools
 import os
 import threading
 
@@ -17,9 +16,7 @@ SHARPENED_DIR = 'output'
 SAVE_DEBUG_PAGES = False
 
 
-API_KEYS = [
-            '7f87db1688e44289a37ee3d1d732a95d.n9WONLII6kxQYTw0RupWC8Ce',
-            ]
+API_KEYS = ['7f87db1688e44289a37ee3d1d732a95d.n9WONLII6kxQYTw0RupWC8Ce',]
 
 MAX_WORKERS = 10 
 MAX_RETRIES = 2
@@ -61,7 +58,6 @@ def _load_keys() -> list[str]:
 
 
 _clients = [Client(host=HOST, headers={'Authorization': f"Bearer {key}"}) for key in _load_keys()]
-_clients_cycle = itertools.cycle(range(len(_clients)))
 
 
 _dead_clients: set[int] = set()
@@ -69,8 +65,7 @@ _dead_clients: set[int] = set()
 
 def get_client() -> Client:
     with _lock:
-        for _ in range(len(_clients)):
-            index = next(_clients_cycle)
+        for index in range(len(_clients)):
             if index not in _dead_clients:
                 return _clients[index]
     raise RuntimeError("All configured Ollama API keys have hit their weekly usage limit.")

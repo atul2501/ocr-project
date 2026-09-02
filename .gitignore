@@ -1,0 +1,4 @@
+.venv
+process.log
+import
+__pycache__
