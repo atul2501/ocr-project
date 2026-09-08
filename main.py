@@ -88,12 +88,17 @@ async def _process_pdf(pdf_bytes: bytes):
 async def extract_binary(request: Request):
     """Upload a single PDF (Postman: Body > binary) and get its extracted JSON back."""
     pdf_bytes = await request.body()
+    logger.info(f"[extract] upload received: {len(pdf_bytes)} bytes")
     if not pdf_bytes:
+        logger.warning("[extract] rejected upload: empty request body")
         raise HTTPException(status_code=400, detail="Empty request body")
     if not pdf_bytes.startswith(b"%PDF-"):
+        logger.warning("[extract] rejected upload: not a PDF")
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    return await _process_pdf(pdf_bytes)
+    output = await _process_pdf(pdf_bytes)
+    logger.info(f"[extract] response sent: {len(output)} invoice(s)")
+    return output
 
 
 async def _process_pdf_job(ticket_id: str, pdf_bytes: bytes) -> None:
@@ -103,30 +108,34 @@ async def _process_pdf_job(ticket_id: str, pdf_bytes: bytes) -> None:
     with NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(pdf_bytes)
         tmp_path = tmp.name
+    source_id = os.path.basename(tmp_path)
+    logger.info(f"[job {ticket_id}] saved upload to temp file: {source_id} ({len(pdf_bytes)} bytes)")
 
     try:
         jobs.update(ticket_id, status=jobs.OCR_PROCESSING, progress=10, message="Running OCR on the document...")
 
         loop = asyncio.get_running_loop()
+        logger.info(f"[job {ticket_id}] rendering PDF pages: {source_id}")
         rendered = await loop.run_in_executor(
             None, lambda: list(enumerate(pdf_to_images(tmp_path), start=1))
         )
+        logger.info(f"[job {ticket_id}] rendered {len(rendered)} page(s): {source_id}")
         pages = []
         for page_num, (image_bytes, blank) in rendered:
             if blank:
-                logger.info(f"skipped (blank page, no OCR call): {os.path.basename(tmp_path)}#page{page_num}")
+                logger.info(f"skipped (blank page, no OCR call): {source_id}#page{page_num}")
                 continue
             pages.append((page_num, image_bytes))
 
         total_pages = len(pages)
         jobs.update(ticket_id, total_pages=total_pages)
+        logger.info(f"[job {ticket_id}] dispatching OCR for {total_pages} page(s): {source_id}")
 
         futures = [
             loop.run_in_executor(executor, process_page, tmp_path, page_num, image_bytes)
             for page_num, image_bytes in pages
         ]
 
-        source_id = os.path.basename(tmp_path)
         results = []
         completed = 0
         for future in asyncio.as_completed(futures):
@@ -147,8 +156,10 @@ async def _process_pdf_job(ticket_id: str, pdf_bytes: bytes) -> None:
                 continue
             results.extend((source_id, invoice) for invoice in kept)
             logger.info(f"done: {key} ({len(kept)} invoice(s))")
+        logger.info(f"[job {ticket_id}] OCR complete, {len(results)} invoice page result(s): {source_id}")
 
         jobs.update(ticket_id, status=jobs.VALIDATING, progress=90, message="Validating and grouping extracted invoices...")
+        logger.info(f"[job {ticket_id}] grouping pages into invoices: {source_id}")
         invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
         output = [invoice.to_dict() for invoice in invoices]
 
@@ -159,8 +170,9 @@ async def _process_pdf_job(ticket_id: str, pdf_bytes: bytes) -> None:
             message="Invoice processed successfully",
             result=output,
         )
+        logger.info(f"[job {ticket_id}] completed: {source_id} -> {len(output)} invoice(s)")
     except Exception as e:
-        logger.exception(f"job failed: {ticket_id}")
+        logger.exception(f"[job {ticket_id}] failed: {source_id}")
         jobs.update(
             ticket_id,
             status=jobs.FAILED,
@@ -169,6 +181,7 @@ async def _process_pdf_job(ticket_id: str, pdf_bytes: bytes) -> None:
         )
     finally:
         os.remove(tmp_path)
+        logger.info(f"[job {ticket_id}] removed temp file: {source_id}")
 
 
 @app.post("/upload")
@@ -177,14 +190,19 @@ async def upload_pdf(request: Request, background_tasks: BackgroundTasks):
     and run the actual OCR/extraction in the background. Poll GET /status/{ticket_id}
     for progress and the final result."""
     pdf_bytes = await request.body()
+    logger.info(f"[upload] upload received: {len(pdf_bytes)} bytes")
     if not pdf_bytes:
+        logger.warning("[upload] rejected upload: empty request body")
         raise HTTPException(status_code=400, detail="Empty request body")
     if not pdf_bytes.startswith(b"%PDF-"):
+        logger.warning("[upload] rejected upload: not a PDF")
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     content_hash = jobs.hash_pdf(pdf_bytes)
+    logger.info(f"[upload] content hash: {content_hash[:12]}...")
     existing = jobs.find_existing(content_hash)
     if existing is not None:
+        logger.info(f"[upload] deduped to existing ticket: {existing.ticket_id}")
         return {
             "success": True,
             "ticket_id": existing.ticket_id,
@@ -194,6 +212,7 @@ async def upload_pdf(request: Request, background_tasks: BackgroundTasks):
 
     job = jobs.create_job(content_hash)
     background_tasks.add_task(_process_pdf_job, job.ticket_id, pdf_bytes)
+    logger.info(f"[upload] queued background job for ticket: {job.ticket_id}")
 
     return {
         "success": True,
@@ -205,7 +224,10 @@ async def upload_pdf(request: Request, background_tasks: BackgroundTasks):
 
 @app.get("/status/{ticket_id}")
 def get_status(ticket_id: str):
+    logger.info(f"[status] poll: {ticket_id}")
     job = jobs.get_job(ticket_id)
     if job is None:
+        logger.warning(f"[status] unknown ticket: {ticket_id}")
         raise HTTPException(status_code=404, detail="Unknown ticket_id")
+    logger.info(f"[status] {ticket_id} -> {job.status} ({job.progress}%)")
     return job.to_dict()
