@@ -51,6 +51,7 @@ executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 
 def sharpen_image(img: Image.Image) -> bytes:
+    logger.debug(f"sharpening image ({img.width}x{img.height})")
     gray = ImageOps.autocontrast(img.convert('L'), cutoff=CONTRAST_CUTOFF)
     sharpened = gray.filter(
         ImageFilter.UnsharpMask(
@@ -61,6 +62,7 @@ def sharpen_image(img: Image.Image) -> bytes:
     )
     buf = io.BytesIO()
     sharpened.save(buf, format='PNG')
+    logger.debug(f"sharpened image -> {buf.tell()} bytes")
     return buf.getvalue()
 
 
@@ -70,6 +72,7 @@ def save_sharpened_page(pdf_path: str, page_num: int, image_bytes: bytes) -> str
     out_path = os.path.join(SHARPENED_DIR, f"{stem}_page{page_num}.pdf")
     with Image.open(io.BytesIO(image_bytes)) as img:
         img.convert('RGB').save(out_path, format='PDF')
+    logger.info(f"saved debug page: {out_path}")
     return out_path
 
 
@@ -77,27 +80,38 @@ def _is_blank_page(img: Image.Image) -> bool:
     histogram = img.convert('L').histogram()
     total = sum(histogram)
     ink_pixels = sum(histogram[:BLANK_PAGE_INK_THRESHOLD])
-    return total > 0 and (ink_pixels / total) < BLANK_PAGE_INK_FRACTION
+    blank = total > 0 and (ink_pixels / total) < BLANK_PAGE_INK_FRACTION
+    logger.debug(f"blank-page check: ink_fraction={ink_pixels / total if total else 0:.6f} blank={blank}")
+    return blank
 
 
 def pdf_to_images(pdf_path: str) -> list[tuple[bytes, bool]]:
+    logger.info(f"opening PDF: {pdf_path}")
     doc = pymupdf.open(pdf_path)
     matrix = pymupdf.Matrix(PDF_ZOOM, PDF_ZOOM)
+    logger.info(f"opened PDF: {os.path.basename(pdf_path)} ({doc.page_count} page(s))")
     pages = []
     for page_num, page in enumerate(doc, start=1):
+        logger.info(f"rendering page: {os.path.basename(pdf_path)}#page{page_num}")
         pix = page.get_pixmap(matrix=matrix)
         raw_image = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
         blank = _is_blank_page(raw_image)
         image_bytes = sharpen_image(raw_image)
+        logger.info(
+            f"rendered+sharpened page: {os.path.basename(pdf_path)}#page{page_num}"
+            f"{' (blank)' if blank else ''}"
+        )
         if SAVE_DEBUG_PAGES:
             save_sharpened_page(pdf_path, page_num, image_bytes)
         pages.append((image_bytes, blank))
     doc.close()
+    logger.info(f"closed PDF: {os.path.basename(pdf_path)} ({len(pages)} page(s) rendered)")
     return pages
 
 
 def extract_receipt(image) -> list[dict]:
     client = get_client()
+    logger.info(f"calling OCR model ({MODEL})")
     try:
         response = client.chat(
             model=MODEL,
@@ -126,13 +140,17 @@ def extract_receipt(image) -> list[dict]:
         )
     except ResponseError as e:
         if e.status_code == 429 and "weekly usage limit" in e.error.lower():
+            logger.warning(f"marking client exhausted (weekly usage limit): status {e.status_code}")
             mark_exhausted(client)
+        logger.warning(f"OCR model call failed: status {e.status_code}: {e}")
         raise
     text = response['message']['content']
+    logger.info(f"OCR model responded ({len(text)} chars)")
 
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
+        logger.warning("OCR model response was not raw JSON, extracting JSON substring")
         match = re.search(r'\[.*\]|\{.*\}', text, re.DOTALL)
         if not match:
             raise ValueError(f"Model did not return valid JSON:\n{text}")
@@ -143,6 +161,7 @@ def extract_receipt(image) -> list[dict]:
         parsed = [parsed]
     if not isinstance(parsed, list) or not parsed or not all(isinstance(p, dict) for p in parsed):
         raise ValueError(f"Model returned an unexpected JSON shape:\n{text}")
+    logger.info(f"OCR model returned {len(parsed)} document object(s)")
     return parsed
 
 
@@ -150,7 +169,10 @@ def extract_receipt_with_retry(image: bytes) -> list[dict]:
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 2):
         try:
-            return extract_receipt(image)
+            logger.info(f"extract attempt {attempt}/{MAX_RETRIES + 1}")
+            result = extract_receipt(image)
+            logger.info(f"extract attempt {attempt} succeeded")
+            return result
         except ResponseError as e:
             if e.status_code not in RETRYABLE_STATUS_CODES:
                 raise  # e.g. 404 model-not-found, 403 needs-subscription: never succeeds
@@ -162,8 +184,11 @@ def extract_receipt_with_retry(image: bytes) -> list[dict]:
 
         if attempt <= MAX_RETRIES:
             delay = min(RETRY_BACKOFF_BASE * 2 ** (attempt - 1), RETRY_BACKOFF_CAP)
-            time.sleep(delay + random.uniform(0, delay * 0.25))
+            sleep_for = delay + random.uniform(0, delay * 0.25)
+            logger.info(f"retrying in {sleep_for:.1f}s (attempt {attempt + 1}/{MAX_RETRIES + 1})")
+            time.sleep(sleep_for)
 
+    logger.error(f"all {MAX_RETRIES + 1} attempt(s) exhausted: {last_exc}")
     raise last_exc
 
 
@@ -182,9 +207,12 @@ def _is_blank_value(value) -> bool:
 def is_blank_result(result: dict) -> bool:
     is_target = str(result.get("METADATA", {}).get("IS_TARGET_DOCUMENT", "")).strip().lower()
     if is_target and is_target != "true":
+        logger.debug("blank result: IS_TARGET_DOCUMENT is not true")
         return True
 
-    return _is_blank_value(result)
+    blank = _is_blank_value(result)
+    logger.debug(f"blank result check: blank={blank}")
+    return blank
 
 
 def _first_value(*values):
@@ -376,6 +404,7 @@ class Invoice:
 
         vehicle_number = _first_value(logistics.get("VEHICLE_NUMBER"), delivery.get("VEHICLE_NUMBER"))
         vendor_name = _first_value(supplier.get("NAME"), supplier.get("LEGAL_NAME"), supplier.get("TRADE_NAME"))
+        logger.debug(f"building invoice from page dict: vendor={vendor_name!r} invoice_no={document.get('INVOICE_NUMBER', '')!r}")
         item_list = cls._build_item_list(data)
         primary_item_count = len(item_list)
         item_list.extend(_build_charge_items(data))
@@ -410,7 +439,7 @@ class Invoice:
                 else _to_float(base_value_raw)
             )
 
-        return cls(
+        invoice = cls(
             IRN_NO=gst_compliance.get("IRN", ""),
             IRN_DATE=gst_compliance.get("ACKNOWLEDGEMENT_DATE", ""),
             INVOICE_NUMBER=document.get("INVOICE_NUMBER", ""),
@@ -441,6 +470,8 @@ class Invoice:
             VEHICLE_NUMBER=vehicle_number,
             ITEM_LIST=item_list,
         )
+        logger.debug(f"built invoice: {document.get('INVOICE_NUMBER', '') or '<no number>'} with {len(item_list)} item(s)")
+        return invoice
 
     @staticmethod
     def _build_item_list(data: dict) -> list["InvoiceItem"]:
@@ -539,6 +570,7 @@ def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
     number" instruction didn't catch (e.g. a vendor's real Tax Invoice
     Number on one page vs. a Billing No./voucher number describing the same
     sale on a companion accounting page)."""
+    logger.info(f"grouping {len(page_results)} page result(s) into invoices")
     invoice_number_by_source: dict[str, str] = {}
     for source_id, page in page_results:
         number = page.get("DOCUMENT", {}).get("INVOICE_NUMBER", "")
@@ -587,10 +619,13 @@ def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
             seen_items_by_number[key] = {_item_fingerprint(item) for item in invoice.ITEM_LIST}
             invoices_by_number[key] = invoice
             order.append(key)
-    return _merge_duplicate_totals(
+    logger.info(f"grouped {len(page_results)} page(s) into {len(order)} distinct invoice number(s)")
+    merged = _merge_duplicate_totals(
         [invoices_by_number[k] for k in order],
         [source_ids_by_number[k] for k in order],
     )
+    logger.info(f"grouping complete: {len(merged)} invoice(s) after duplicate-total merge")
+    return merged
 
 
 def _merge_duplicate_totals(invoices: list[Invoice], source_ids: list[set[str]]) -> list[Invoice]:
@@ -636,6 +671,9 @@ def _merge_duplicate_totals(invoices: list[Invoice], source_ids: list[set[str]])
                         continue
                     if getattr(primary, f.name) in ("", 0.0) and getattr(other, f.name) not in ("", 0.0):
                         setattr(primary, f.name, getattr(other, f.name))
+                logger.info(
+                    f"merged duplicate-total invoice: {other.INVOICE_NUMBER!r} folded into {primary.INVOICE_NUMBER!r}"
+                )
                 kept[i] = primary
                 kept_sources[i] |= srcs
                 break
@@ -652,8 +690,11 @@ def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str,
     list means success (even an empty one, if extraction somehow yields no
     invoices)."""
     key = f"{os.path.basename(pdf_path)}#page{page_num}"
+    logger.info(f"processing: {key}")
     try:
-        return key, extract_receipt_with_retry(image_bytes)
+        result = extract_receipt_with_retry(image_bytes)
+        logger.info(f"succeeded: {key} ({len(result)} document(s))")
+        return key, result
     except Exception as e:
         # logger.exception (not .error) so the full traceback lands in
         # process.log, not just the message - needed to debug anything
@@ -663,8 +704,10 @@ def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str,
 
 
 def main():
+    pdf_paths = glob.glob(os.path.join(INVOICE_DIR, '*.pdf'))
+    logger.info(f"starting batch run: {INVOICE_DIR} ({len(pdf_paths)} PDF(s) found)")
     pages = []
-    for pdf_path in glob.glob(os.path.join(INVOICE_DIR, '*.pdf')):
+    for pdf_path in pdf_paths:
         try:
             for page_num, (image_bytes, blank) in enumerate(pdf_to_images(pdf_path), start=1):
                 if blank:
@@ -676,6 +719,7 @@ def main():
             # log it and keep going with the rest of the files.
             logger.exception(f"failed to render {os.path.basename(pdf_path)}")
 
+    logger.info(f"dispatching OCR for {len(pages)} page(s) across {MAX_WORKERS} worker(s)")
     results = []
     # ThreadPoolExecutor.map yields results in the same order as `pages`
     # (despite running concurrently), so zipping the two together safely
@@ -694,6 +738,7 @@ def main():
         results.extend((source, invoice) for invoice in kept)
         logger.info(f"done: {key} ({len(kept)} invoice(s))")
 
+    logger.info(f"OCR complete: {len(results)} kept page-invoice result(s), building final invoice list")
     invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
     output = [invoice.to_dict() for invoice in invoices]
 
@@ -704,6 +749,7 @@ def main():
         logger.exception(f"failed to write {OUTPUT_PATH}")
         raise
 
+    logger.info(f"batch run finished: {len(output)} invoice(s) written to {OUTPUT_PATH}")
     print(json.dumps(output, indent=2, ensure_ascii=False))
 
 
