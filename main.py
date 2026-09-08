@@ -4,7 +4,6 @@ import json
 import os
 from tempfile import NamedTemporaryFile
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
-import jobs
 from model import (
     INVOICE_DIR,
     OUTPUT_PATH,
@@ -16,6 +15,8 @@ from model import (
     pdf_to_images,
     process_page,
 )
+import jobs  # imported after model so logging.basicConfig (in model) is
+             # already configured before jobs._load_cache() logs at import time
 
 app = FastAPI(title="Receipt OCR API")
 
@@ -35,26 +36,29 @@ async def _process_pdf(pdf_bytes: bytes):
     with NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(pdf_bytes)
         tmp_path = tmp.name
+    source_id = os.path.basename(tmp_path)
+    logger.info(f"[extract] saved upload to temp file: {source_id} ({len(pdf_bytes)} bytes)")
 
     try:
         loop = asyncio.get_running_loop()
+        logger.info(f"[extract] rendering PDF pages: {source_id}")
         rendered = await loop.run_in_executor(
             None, lambda: list(enumerate(pdf_to_images(tmp_path), start=1))
         )
+        logger.info(f"[extract] rendered {len(rendered)} page(s): {source_id}")
         pages = []
         for page_num, (image_bytes, blank) in rendered:
             if blank:
-                logger.info(f"skipped (blank page, no OCR call): {os.path.basename(tmp_path)}#page{page_num}")
+                logger.info(f"skipped (blank page, no OCR call): {source_id}#page{page_num}")
                 continue
             pages.append((page_num, image_bytes))
 
-
+        logger.info(f"[extract] dispatching OCR for {len(pages)} page(s): {source_id}")
         futures = [
             loop.run_in_executor(executor, process_page, tmp_path, page_num, image_bytes)
             for page_num, image_bytes in pages
         ]
 
-        source_id = os.path.basename(tmp_path)
         results = []
         for future in asyncio.as_completed(futures):
             key, result = await future
@@ -67,11 +71,15 @@ async def _process_pdf(pdf_bytes: bytes):
                 continue
             results.extend((source_id, invoice) for invoice in kept)
             logger.info(f"done: {key} ({len(kept)} invoice(s))")
+        logger.info(f"[extract] OCR complete, {len(results)} invoice page result(s): {source_id}")
     finally:
         os.remove(tmp_path)
+        logger.info(f"[extract] removed temp file: {source_id}")
 
+    logger.info(f"[extract] grouping pages into invoices: {source_id}")
     invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
     output = [invoice.to_dict() for invoice in invoices]
+    logger.info(f"[extract] finished: {source_id} -> {len(output)} invoice(s) returned")
     return output
 
 

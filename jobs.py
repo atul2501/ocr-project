@@ -9,12 +9,15 @@ existing ticket instead of kicking off a second background job.
 
 import hashlib
 import json
+import logging
 import os
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 RECEIVED = "PROCESSING"
 OCR_PROCESSING = "OCR_PROCESSING"
@@ -80,6 +83,8 @@ def _purge_expired() -> None:
             os.remove(_cache_path(ticket_id))
         except OSError:
             pass
+    if expired:
+        logger.info(f"purged {len(expired)} expired ticket(s): {expired}")
 
 
 def _save_to_cache(ticket_id: str, snapshot: dict) -> None:
@@ -92,8 +97,9 @@ def _save_to_cache(ticket_id: str, snapshot: dict) -> None:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(snapshot, f)
         os.replace(tmp_path, path)
+        logger.debug(f"cached ticket to disk: {ticket_id}")
     except OSError:
-        pass
+        logger.warning(f"failed to write cache file for ticket: {ticket_id}")
 
 
 def _load_cache() -> None:
@@ -101,6 +107,7 @@ def _load_cache() -> None:
     (and deleting) anything already past CACHE_TTL_SECONDS."""
     if not os.path.isdir(CACHE_DIR):
         return
+    loaded = 0
     for name in os.listdir(CACHE_DIR):
         if not name.endswith(".json"):
             continue
@@ -119,6 +126,8 @@ def _load_cache() -> None:
             continue
         _jobs[job.ticket_id] = job
         _hash_to_ticket[job.content_hash] = job.ticket_id
+        loaded += 1
+    logger.info(f"loaded {loaded} ticket(s) from cache: {CACHE_DIR}")
 
 
 _load_cache()
@@ -139,9 +148,11 @@ def find_existing(content_hash: str) -> Optional[Job]:
     with _lock:
         ticket_id = _hash_to_ticket.get(content_hash)
         if ticket_id is None:
+            logger.info(f"no existing ticket for content hash {content_hash[:12]}...")
             return None
         job = _jobs.get(ticket_id)
         if job is not None and job.status != FAILED:
+            logger.info(f"found existing ticket {ticket_id} (status={job.status}) for content hash {content_hash[:12]}...")
             return job
         return None
 
@@ -155,22 +166,27 @@ def create_job(content_hash: str) -> Job:
         _hash_to_ticket[content_hash] = ticket_id
         snapshot = asdict(job)
     _save_to_cache(ticket_id, snapshot)
+    logger.info(f"created ticket: {ticket_id} for content hash {content_hash[:12]}...")
     return job
 
 
 def get_job(ticket_id: str) -> Optional[Job]:
     _purge_expired()
     with _lock:
-        return _jobs.get(ticket_id)
+        job = _jobs.get(ticket_id)
+    logger.debug(f"status lookup: {ticket_id} -> {'found' if job else 'not found'}")
+    return job
 
 
 def update(ticket_id: str, **fields: Any) -> None:
     with _lock:
         job = _jobs.get(ticket_id)
         if job is None:
+            logger.warning(f"update on unknown ticket: {ticket_id}")
             return
         for key, value in fields.items():
             setattr(job, key, value)
         job.updated_at = time.time()
         snapshot = asdict(job)
+    logger.info(f"ticket {ticket_id} updated: {fields.get('status', job.status)} - {fields.get('message', job.message)}")
     _save_to_cache(ticket_id, snapshot)
