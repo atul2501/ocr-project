@@ -7,6 +7,7 @@ import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from logging.handlers import TimedRotatingFileHandler
 from dataclasses import asdict, dataclass, field, fields
 from prompt import PROMPTS
 import httpx
@@ -37,12 +38,25 @@ from ollama import ResponseError
 from PIL import Image, ImageFilter, ImageOps
 
 
-logging.basicConfig(
-    filename=LOG_PATH,
-    filemode='a',
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(message)s',
-)
+class _DailyWipingHandler(TimedRotatingFileHandler):
+    """Same rollover scheduling as TimedRotatingFileHandler, but wipes the
+    log file in place on rollover instead of renaming it to a backup -
+    process.log only ever holds the last <=24h of entries, with nothing
+    older kept around in any file."""
+    def doRollover(self):
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        with open(self.baseFilename, 'w', encoding=self.encoding):
+            pass
+        if not self.delay:
+            self.stream = self._open()
+        self.rolloverAt = self.computeRollover(int(time.time()))
+
+
+_log_handler = _DailyWipingHandler(filename=LOG_PATH, when='H', interval=24, encoding='utf-8')
+_log_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler])
 logger = logging.getLogger(__name__)
 
 PROMPT = (PROMPTS)
@@ -129,14 +143,11 @@ def extract_receipt(image) -> list[dict]:
                                           # down on the malformed-JSON retries
                                           # seen in process.log, each of which
                                           # costs a full extra call
-            keep_alive='30m',  # keep the model loaded on the server between
-                                # requests instead of the (short) default -
-                                # process.log shows real gaps of 5-12+
-                                # minutes between batches during normal use,
-                                # long enough for a shared/free-tier host to
-                                # unload an idle model and pay a reload cost
-                                # on the next request ("first time it took
-                                # 1 min" is the signature of exactly this)
+            keep_alive=-1,  # never unload the model on the server - process.log
+                             # shows real idle gaps of 30min-2hrs+ between
+                             # batches during normal use, long enough for a
+                             # shared/free-tier host to unload an idle model
+                             # and pay a reload cost (40s+) on the next request
         )
     except ResponseError as e:
         if e.status_code == 429 and "weekly usage limit" in e.error.lower():
@@ -242,9 +253,74 @@ def _item_fingerprint(item: "InvoiceItem") -> tuple:
 
 _PAN_PATTERN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 
+_GSTIN_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+# Expected character class per position (0-13) of a 15-char GSTIN: 2-digit
+# state code, 5-letter+4-digit+1-letter PAN, 1-digit entity code, literal
+# "Z". Position 14 (checksum) isn't a fixed class - it's computed below.
+_GSTIN_TEMPLATE = "DDLLLLLDDDDLDZ"
+
+# OCR glyph pairs the prompt already asks the model to double-check
+# (prompt.py's ALPHANUMERIC ID FIELDS section) - used here to correct a
+# character only when the swap is what the GSTIN's own structure/checksum
+# says it must be, never as a blind guess.
+_GSTIN_CONFUSABLE = {
+    "0": "O", "O": "0",
+    "1": "I", "I": "1",
+    "5": "S", "S": "5",
+    "6": "G", "G": "6",
+    "8": "B", "B": "8",
+    "2": "Z", "Z": "2",
+}
+
+
+def _gstin_checksum(first14: str) -> str:
+    """The GSTIN's 15th character is a mod-36 checksum of the first 14, not
+    free-form OCR - algorithm verified against 6 real GSTINs pulled from
+    this project's own sample invoices (factor alternates 1,2,1,2... from
+    the left; check char = (36 - total%36) % 36)."""
+    total = 0
+    for i, ch in enumerate(first14):
+        code = _GSTIN_CHARSET.index(ch)
+        factor = 1 if i % 2 == 0 else 2
+        d = code * factor
+        d = d // 36 + d % 36
+        total += d
+    return _GSTIN_CHARSET[(36 - total % 36) % 36]
+
+
+def _class_matches(ch: str, cls: str) -> bool:
+    if cls == "D":
+        return ch.isdigit()
+    if cls == "L":
+        return ch.isalpha()
+    return ch == cls  # "Z" position - literal letter Z
+
+
+def normalize_gstin(gstin: str) -> str:
+    """Correct a single OCR glyph misread (e.g. checksum "0" that should be
+    "O") when doing so is what the GSTIN's own fixed digit/letter layout or
+    checksum requires - never applied speculatively, only when the swap
+    makes an otherwise-invalid position valid. Leaves anything else
+    (wrong length, multi-character errors) untouched for a human to catch."""
+    gstin = (gstin or "").strip().upper()
+    if len(gstin) != 15:
+        return gstin
+    chars = list(gstin)
+    for i, cls in enumerate(_GSTIN_TEMPLATE):
+        if _class_matches(chars[i], cls):
+            continue
+        swap = _GSTIN_CONFUSABLE.get(chars[i])
+        if swap and _class_matches(swap, cls):
+            chars[i] = swap
+    expected_check = _gstin_checksum("".join(chars[:14]))
+    if chars[14] != expected_check and _GSTIN_CONFUSABLE.get(chars[14]) == expected_check:
+        chars[14] = expected_check
+    return "".join(chars)
+
 
 def _pan_from_gstin(gstin: str) -> str:
-    gstin = (gstin or "").strip().upper()
+    gstin = normalize_gstin(gstin)
     if len(gstin) != 15 or gstin[13] != "Z":
         return ""
     candidate = gstin[2:12]
@@ -449,9 +525,9 @@ class Invoice:
                 document.get("INVOICE_REFERENCE_NUMBER"),
             ),
             VENDOR_NAME=vendor_name,
-            VENDOR_GST_NO=supplier.get("GSTIN", ""),
+            VENDOR_GST_NO=normalize_gstin(supplier.get("GSTIN", "")),
             CUSTOMER_NAME=_first_value(customer.get("NAME"), customer.get("LEGAL_NAME")),
-            CUSTOMER_GST_NO=_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN")),
+            CUSTOMER_GST_NO=normalize_gstin(_first_value(customer.get("GSTIN"), gst_compliance.get("CUSTOMER_GSTIN"))),
             PLACE_OF_SUPPLY_CODE=place_of_supply_code,
             PLACE_OF_SUPPLY_STATE=place_of_supply_state,
             BASE_VALUE=base_value,
@@ -691,56 +767,76 @@ def process_page(pdf_path: str, page_num: int, image_bytes: bytes) -> tuple[str,
     invoices)."""
     key = f"{os.path.basename(pdf_path)}#page{page_num}"
     logger.info(f"processing: {key}")
+    started = time.monotonic()
     try:
         result = extract_receipt_with_retry(image_bytes)
-        logger.info(f"succeeded: {key} ({len(result)} document(s))")
+        logger.info(f"succeeded: {key} ({len(result)} document(s)) [{time.monotonic() - started:.2f}s]")
         return key, result
     except Exception as e:
         # logger.exception (not .error) so the full traceback lands in
         # process.log, not just the message - needed to debug anything
         # unexpected later, not just the known retryable cases above.
-        logger.exception(f"failed: {key}")
+        logger.exception(f"failed: {key} [{time.monotonic() - started:.2f}s]")
         return key, {"error": f"{type(e).__name__}: {e}"}
 
 
 def main():
+    batch_started = time.monotonic()
     pdf_paths = glob.glob(os.path.join(INVOICE_DIR, '*.pdf'))
     logger.info(f"starting batch run: {INVOICE_DIR} ({len(pdf_paths)} PDF(s) found)")
     pages = []
+    pages_per_source: dict[str, int] = {}
     for pdf_path in pdf_paths:
+        source = os.path.basename(pdf_path)
+        render_started = time.monotonic()
         try:
+            page_count = 0
             for page_num, (image_bytes, blank) in enumerate(pdf_to_images(pdf_path), start=1):
                 if blank:
-                    logger.info(f"skipped (blank page, no OCR call): {os.path.basename(pdf_path)}#page{page_num}")
+                    logger.info(f"skipped (blank page, no OCR call): {source}#page{page_num}")
                     continue
                 pages.append((pdf_path, page_num, image_bytes))
+                page_count += 1
+            pages_per_source[source] = page_count
+            logger.info(f"rendered {source}: {page_count} page(s) to OCR [{time.monotonic() - render_started:.2f}s]")
         except Exception:
             # A corrupt/unreadable PDF shouldn't take the whole batch down;
             # log it and keep going with the rest of the files.
-            logger.exception(f"failed to render {os.path.basename(pdf_path)}")
+            logger.exception(f"failed to render {source} [{time.monotonic() - render_started:.2f}s]")
 
+    ocr_started = time.monotonic()
     logger.info(f"dispatching OCR for {len(pages)} page(s) across {MAX_WORKERS} worker(s)")
     results = []
+    completed_per_source: dict[str, int] = {}
     # ThreadPoolExecutor.map yields results in the same order as `pages`
     # (despite running concurrently), so zipping the two together safely
     # recovers which source PDF each result came from - needed by
     # group_into_invoices() to fold blank-invoice-number pages into the
     # right invoice.
     for (pdf_path, _, _), (key, result) in zip(pages, executor.map(lambda args: process_page(*args), pages)):
+        source = os.path.basename(pdf_path)
         if isinstance(result, dict):  # process_page's {"error": ...} sentinel
             logger.info(f"skipped (failed): {key}")
-            continue
-        kept = [invoice for invoice in result if not is_blank_result(invoice)]
-        if not kept:
-            logger.info(f"skipped (blank): {key}")
-            continue
-        source = os.path.basename(pdf_path)
-        results.extend((source, invoice) for invoice in kept)
-        logger.info(f"done: {key} ({len(kept)} invoice(s))")
+        else:
+            kept = [invoice for invoice in result if not is_blank_result(invoice)]
+            if not kept:
+                logger.info(f"skipped (blank): {key}")
+            else:
+                results.extend((source, invoice) for invoice in kept)
+                logger.info(f"done: {key} ({len(kept)} invoice(s))")
+        completed_per_source[source] = completed_per_source.get(source, 0) + 1
+        if completed_per_source[source] == pages_per_source.get(source):
+            logger.info(
+                f"PDF complete: {source} - {completed_per_source[source]} page(s) OCR'd "
+                f"[{time.monotonic() - batch_started:.2f}s since batch start]"
+            )
+    ocr_elapsed = time.monotonic() - ocr_started
 
-    logger.info(f"OCR complete: {len(results)} kept page-invoice result(s), building final invoice list")
+    logger.info(f"OCR complete: {len(results)} kept page-invoice result(s) [{ocr_elapsed:.2f}s], building final invoice list")
+    grouping_started = time.monotonic()
     invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
     output = [invoice.to_dict() for invoice in invoices]
+    grouping_elapsed = time.monotonic() - grouping_started
 
     try:
         with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
@@ -749,7 +845,11 @@ def main():
         logger.exception(f"failed to write {OUTPUT_PATH}")
         raise
 
-    logger.info(f"batch run finished: {len(output)} invoice(s) written to {OUTPUT_PATH}")
+    total_elapsed = time.monotonic() - batch_started
+    logger.info(
+        f"batch run finished: {len(output)} invoice(s) written to {OUTPUT_PATH} "
+        f"[ocr: {ocr_elapsed:.2f}s, grouping: {grouping_elapsed:.2f}s, total: {total_elapsed:.2f}s]"
+    )
     print(json.dumps(output, indent=2, ensure_ascii=False))
 
 

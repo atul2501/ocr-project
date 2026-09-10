@@ -2,3 +2,7 @@
 process.log
 import
 __pycache__
+pending/
+cache/
+output/
+.env

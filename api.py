@@ -1,7 +1,12 @@
 import os
 import threading
 
+from dotenv import load_dotenv
 from ollama import Client
+
+load_dotenv()  # reads .env into the process environment (if present) before
+                # _load_keys() below checks os.environ - lets OLLAMA_API_KEY_1
+                # etc. be set via .env locally instead of real env vars
 
 HOST = 'https://ollama.com'
 KEY_ENV_PREFIX = 'OLLAMA_API_KEY_'
@@ -16,9 +21,37 @@ SHARPENED_DIR = 'output'
 SAVE_DEBUG_PAGES = False
 
 
-API_KEYS = ['7f87db1688e44289a37ee3d1d732a95d.n9WONLII6kxQYTw0RupWC8Ce',]
+API_KEYS: list[str] = []  # never hardcode a real key here - set
+                          # OLLAMA_API_KEY_1, OLLAMA_API_KEY_2, ... instead
 
-MAX_WORKERS = 10 
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+MAX_WORKERS = _int_env('MAX_WORKERS', 10)
+PDF_WORKER_COUNT = _int_env('PDF_WORKER_COUNT', 5)  # how many PDFs (from
+                      # /upload) can be rendered/processed concurrently -
+                      # page-level OCR calls within those PDFs still share
+                      # the MAX_WORKERS-sized executor above, so this mainly
+                      # bounds concurrent PDF rendering (pymupdf get_pixmap
+                      # is memory-heavy) rather than OCR throughput
+UPLOAD_QUEUE_MAXSIZE = _int_env('UPLOAD_QUEUE_MAXSIZE', 2000)  # /upload
+                            # replies 503 once this many tickets are queued
+                            # and not yet picked up by a worker - cheap to
+                            # size generously since queued entries are just
+                            # ticket IDs, not PDF bytes (see jobs.PENDING_DIR)
+MAX_UPLOAD_MB = _int_env('MAX_UPLOAD_MB', 25)  # /upload rejects (413) any
+                            # PDF larger than this, streamed check - keeps a
+                            # single oversized file from exhausting memory
+                            # or disk when many uploads arrive at once
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 MAX_RETRIES = 2
 RETRY_BACKOFF_BASE = 2
 RETRY_BACKOFF_CAP = 30
@@ -51,8 +84,8 @@ def _load_keys() -> list[str]:
         i += 1
     if not keys:
         raise RuntimeError(
-            "No Ollama API keys found. Add at least one to API_KEYS in api.py, "
-            f"or set {KEY_ENV_PREFIX}1, {KEY_ENV_PREFIX}2, ... in the environment."
+            f"No Ollama API keys found. Set {KEY_ENV_PREFIX}1, {KEY_ENV_PREFIX}2, ... "
+            "in the environment (do not hardcode keys in source)."
         )
     return keys
 
