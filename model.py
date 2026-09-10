@@ -54,9 +54,17 @@ class _DailyWipingHandler(TimedRotatingFileHandler):
         self.rolloverAt = self.computeRollover(int(time.time()))
 
 
+_log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+
 _log_handler = _DailyWipingHandler(filename=LOG_PATH, when='H', interval=24, encoding='utf-8')
-_log_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
-logging.basicConfig(level=logging.INFO, handlers=[_log_handler])
+_log_handler.setFormatter(_log_formatter)
+
+_console_handler = logging.StreamHandler()  # so logs also reach stdout - process.log
+                                             # itself is on Render's ephemeral disk and
+                                             # isn't visible in the Render log viewer
+_console_handler.setFormatter(_log_formatter)
+
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler, _console_handler])
 logger = logging.getLogger(__name__)
 
 PROMPT = (PROMPTS)
