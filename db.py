@@ -7,6 +7,7 @@ when a Postgres instance is linked to the service on Render; locally, set
 it in .env the same way as the OLLAMA_API_KEY_* variables.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -20,6 +21,20 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
+
+# Managed Postgres providers (Neon, Supabase, Render) commonly hand out a
+# connection string that's pgbouncer'd in transaction-pooling mode, which
+# does not support asyncpg's default server-side prepared statement cache
+# (each pooled connection can be handed to a different client between
+# statements, so a cached prepared statement can silently point at the
+# wrong session). Disabling it is the safe default for a hosted DB; set
+# DB_STATEMENT_CACHE_SIZE if connecting directly to Postgres and want it back.
+STATEMENT_CACHE_SIZE = int(os.environ.get('DB_STATEMENT_CACHE_SIZE', '0'))
+POOL_MIN_SIZE = int(os.environ.get('DB_POOL_MIN_SIZE', '1'))
+POOL_MAX_SIZE = int(os.environ.get('DB_POOL_MAX_SIZE', '10'))
+COMMAND_TIMEOUT = float(os.environ.get('DB_COMMAND_TIMEOUT', '30'))
+CONNECT_RETRIES = int(os.environ.get('DB_CONNECT_RETRIES', '5'))
+CONNECT_RETRY_BASE_DELAY = float(os.environ.get('DB_CONNECT_RETRY_BASE_DELAY', '1'))
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -59,7 +74,35 @@ async def connect() -> None:
             "in the environment (on Render: create a Postgres instance and add its "
             "connection string as an env var on this service)."
         )
-    _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10, init=_init_connection)
+
+    last_error: Optional[Exception] = None
+    for attempt in range(1, CONNECT_RETRIES + 1):
+        try:
+            _pool = await asyncpg.create_pool(
+                DATABASE_URL,
+                min_size=POOL_MIN_SIZE,
+                max_size=POOL_MAX_SIZE,
+                command_timeout=COMMAND_TIMEOUT,
+                statement_cache_size=STATEMENT_CACHE_SIZE,
+                init=_init_connection,
+            )
+            break
+        except (OSError, asyncpg.PostgresError) as exc:
+            last_error = exc
+            if attempt == CONNECT_RETRIES:
+                break
+            delay = CONNECT_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            logger.warning(
+                "database connection attempt %d/%d failed (%s), retrying in %.1fs",
+                attempt, CONNECT_RETRIES, exc, delay,
+            )
+            await asyncio.sleep(delay)
+
+    if _pool is None:
+        raise RuntimeError(
+            f"could not connect to the database after {CONNECT_RETRIES} attempts: {last_error}"
+        ) from last_error
+
     async with _pool.acquire() as conn:
         await conn.execute(_SCHEMA)
     logger.info("connected to database and ensured jobs table exists")
