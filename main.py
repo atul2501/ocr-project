@@ -20,8 +20,9 @@ from model import (
     pdf_to_images,
     process_page,
 )
+import db
 import jobs  # imported after model so logging.basicConfig (in model) is
-             # already configured before jobs._load_cache() logs at import time
+             # already configured before jobs' log calls run
 
 # Bounded queue that /upload feeds and a fixed pool of worker tasks drains -
 # caps how many PDFs are being rendered/OCR'd at once (PDF_WORKER_COUNT)
@@ -51,22 +52,26 @@ async def _upload_worker(worker_id: int) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await db.connect()
+
     workers = [asyncio.create_task(_upload_worker(i)) for i in range(PDF_WORKER_COUNT)]
     logger.info(f"started {PDF_WORKER_COUNT} upload worker(s)")
 
-    # Re-queue tickets left in-flight by a previous crash/restart (their PDF
-    # is still sitting in jobs.PENDING_DIR), so a redeploy under load doesn't
-    # silently strand part of a large batch.
-    for ticket_id in jobs.reconcile_pending():
+    # Re-queue tickets left in-flight by a previous crash/restart/redeploy
+    # (their PDF is restored from the database if it's not still sitting in
+    # jobs.PENDING_DIR), so a redeploy under load doesn't silently strand
+    # part of a large batch.
+    for ticket_id in await jobs.reconcile_pending():
         try:
             _upload_queue.put_nowait(ticket_id)
         except asyncio.QueueFull:
-            jobs.update(ticket_id, status=jobs.FAILED, message="Processing failed", error="Server restarted with a full queue - please resubmit")
+            await jobs.update(ticket_id, status=jobs.FAILED, message="Processing failed", error="Server restarted with a full queue - please resubmit")
 
     yield
     for worker in workers:
         worker.cancel()
     logger.info("stopped upload worker(s)")
+    await db.disconnect()
 
 
 app = FastAPI(title="Receipt OCR API", lifespan=lifespan)
@@ -173,11 +178,11 @@ async def _process_pdf_job(ticket_id: str) -> None:
     source_id = os.path.basename(tmp_path)
     if not os.path.isfile(tmp_path):
         logger.error(f"[job {ticket_id}] pending file missing, cannot process: {tmp_path}")
-        jobs.update(ticket_id, status=jobs.FAILED, message="Processing failed", error="Uploaded file was missing when processing started")
+        await jobs.update(ticket_id, status=jobs.FAILED, message="Processing failed", error="Uploaded file was missing when processing started")
         return
 
     try:
-        jobs.update(ticket_id, status=jobs.OCR_PROCESSING, progress=10, message="Running OCR on the document...")
+        await jobs.update(ticket_id, status=jobs.OCR_PROCESSING, progress=10, message="Running OCR on the document...")
 
         loop = asyncio.get_running_loop()
         stage_started = time.monotonic()
@@ -195,7 +200,7 @@ async def _process_pdf_job(ticket_id: str) -> None:
             pages.append((page_num, image_bytes))
 
         total_pages = len(pages)
-        jobs.update(ticket_id, total_pages=total_pages)
+        await jobs.update(ticket_id, total_pages=total_pages)
         logger.info(f"[job {ticket_id}] dispatching OCR for {total_pages} page(s): {source_id}")
 
         stage_started = time.monotonic()
@@ -211,7 +216,7 @@ async def _process_pdf_job(ticket_id: str) -> None:
             completed += 1
             page_elapsed = time.monotonic() - stage_started
             if total_pages:
-                jobs.update(
+                await jobs.update(
                     ticket_id,
                     progress=10 + int(70 * completed / total_pages),
                     message=f"OCR processing: {completed}/{total_pages} page(s)",
@@ -228,14 +233,14 @@ async def _process_pdf_job(ticket_id: str) -> None:
         ocr_elapsed = time.monotonic() - stage_started
         logger.info(f"[job {ticket_id}] OCR complete, {len(results)} invoice page result(s): {source_id} [{ocr_elapsed:.2f}s]")
 
-        jobs.update(ticket_id, status=jobs.VALIDATING, progress=90, message="Validating and grouping extracted invoices...")
+        await jobs.update(ticket_id, status=jobs.VALIDATING, progress=90, message="Validating and grouping extracted invoices...")
         stage_started = time.monotonic()
         logger.info(f"[job {ticket_id}] grouping pages into invoices: {source_id}")
         invoices = [inv for inv in group_into_invoices(results) if not is_blank_invoice(inv)]
         output = [invoice.to_dict() for invoice in invoices]
         grouping_elapsed = time.monotonic() - stage_started
 
-        jobs.update(
+        await jobs.update(
             ticket_id,
             status=jobs.COMPLETED,
             progress=100,
@@ -249,7 +254,7 @@ async def _process_pdf_job(ticket_id: str) -> None:
         )
     except Exception as e:
         logger.exception(f"[job {ticket_id}] failed: {source_id} [{time.monotonic() - job_started:.2f}s since job start]")
-        jobs.update(
+        await jobs.update(
             ticket_id,
             status=jobs.FAILED,
             message="Processing failed",
@@ -319,7 +324,7 @@ async def upload_pdf(request: Request):
 
     content_hash = hasher.hexdigest()
     logger.info(f"[upload] content hash: {content_hash[:12]}...")
-    existing = jobs.find_existing(content_hash)
+    existing = await jobs.find_existing(content_hash)
     if existing is not None:
         jobs.safe_remove(tmp_path)
         logger.info(f"[upload] deduped to existing ticket: {existing.ticket_id}")
@@ -335,12 +340,16 @@ async def upload_pdf(request: Request):
         logger.warning(f"[upload] rejected upload: queue full ({_upload_queue.qsize()} ticket(s) waiting)")
         raise HTTPException(status_code=503, detail="Server is busy processing other PDFs - please retry shortly")
 
-    job = jobs.create_job(content_hash)
+    with open(tmp_path, "rb") as f:
+        pdf_bytes = f.read()  # kept in the database too (see jobs.create_job)
+                               # so this upload survives a redeploy, not just
+                               # a crash - bounded by MAX_UPLOAD_BYTES
+    job = await jobs.create_job(content_hash, pdf_bytes)
     os.replace(tmp_path, jobs.pending_path(job.ticket_id))
     try:
         _upload_queue.put_nowait(job.ticket_id)
     except asyncio.QueueFull:
-        jobs.update(job.ticket_id, status=jobs.FAILED, message="Queue full", error="Server is busy processing other PDFs")
+        await jobs.update(job.ticket_id, status=jobs.FAILED, message="Queue full", error="Server is busy processing other PDFs")
         jobs.safe_remove(jobs.pending_path(job.ticket_id))
         logger.warning(f"[upload] rejected upload: queue full at put time: {job.ticket_id}")
         raise HTTPException(status_code=503, detail="Server is busy processing other PDFs - please retry shortly")
@@ -355,9 +364,9 @@ async def upload_pdf(request: Request):
 
 
 @app.get("/status/{ticket_id}")
-def get_status(ticket_id: str):
+async def get_status(ticket_id: str):
     logger.info(f"[status] poll: {ticket_id}")
-    job = jobs.get_job(ticket_id)
+    job = await jobs.get_job(ticket_id)
     if job is None:
         logger.warning(f"[status] unknown ticket: {ticket_id}")
         raise HTTPException(status_code=404, detail="Unknown ticket_id")
