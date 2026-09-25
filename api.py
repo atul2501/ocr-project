@@ -52,6 +52,28 @@ MAX_UPLOAD_MB = _int_env('MAX_UPLOAD_MB', 25)  # /upload rejects (413) any
                             # single oversized file from exhausting memory
                             # or disk when many uploads arrive at once
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+IMAP_HOST = os.environ.get('IMAP_HOST', '').strip()
+IMAP_PORT = _int_env('IMAP_PORT', 993)
+IMAP_USE_SSL = os.environ.get('IMAP_USE_SSL', 'true').strip().lower() not in ('0', 'false', 'no')
+IMAP_USERNAME = os.environ.get('IMAP_USERNAME', '').strip()
+IMAP_PASSWORD = os.environ.get('IMAP_PASSWORD', '')  # with 2FA (Gmail etc.)
+                            # this must be an app password, not the account
+                            # password - IMAP logins with the latter fail
+if IMAP_HOST.endswith('gmail.com'):
+    IMAP_PASSWORD = IMAP_PASSWORD.replace(' ', '')  # Google shows app
+                            # passwords in 4 groups of 4 - drop the spaces
+IMAP_FOLDER = os.environ.get('IMAP_FOLDER', 'INBOX')
+IMAP_PROCESSED_FOLDER = os.environ.get('IMAP_PROCESSED_FOLDER', '').strip()  # if
+                            # set, fully-ingested emails are moved here
+                            # instead of just being marked read
+IMAP_POLL_INTERVAL_SECONDS = _int_env('IMAP_POLL_INTERVAL_SECONDS', 60)
+IMAP_TIMEOUT_SECONDS = _int_env('IMAP_TIMEOUT_SECONDS', 30)
+EMAIL_MAX_ATTEMPTS = max(1, _int_env('EMAIL_MAX_ATTEMPTS', 3))
+EMAIL_ENABLED = bool(IMAP_HOST and IMAP_USERNAME and IMAP_PASSWORD)  # the
+                            # email watcher and /api/v1/invoices/new only run
+                            # when all three are set
+
 MAX_RETRIES = 2
 RETRY_BACKOFF_BASE = 2
 RETRY_BACKOFF_CAP = 30

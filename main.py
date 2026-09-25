@@ -8,7 +8,14 @@ import uuid
 from contextlib import asynccontextmanager
 from tempfile import NamedTemporaryFile
 from fastapi import FastAPI, HTTPException, Request
-from api import MAX_UPLOAD_BYTES, PDF_WORKER_COUNT, UPLOAD_QUEUE_MAXSIZE
+from api import (
+    EMAIL_ENABLED,
+    EMAIL_MAX_ATTEMPTS,
+    IMAP_POLL_INTERVAL_SECONDS,
+    MAX_UPLOAD_BYTES,
+    PDF_WORKER_COUNT,
+    UPLOAD_QUEUE_MAXSIZE,
+)
 from model import (
     INVOICE_DIR,
     OUTPUT_PATH,
@@ -22,6 +29,7 @@ from model import (
 )
 import jobs  # imported after model so logging.basicConfig (in model) is
              # already configured before jobs._load_cache() logs at import time
+import email_inbox
 
 # Bounded queue that /upload feeds and a fixed pool of worker tasks drains -
 # caps how many PDFs are being rendered/OCR'd at once (PDF_WORKER_COUNT)
@@ -49,6 +57,83 @@ async def _upload_worker(worker_id: int) -> None:
             _upload_queue.task_done()
 
 
+def _submit_email_pdf(pdf: email_inbox.EmailPdf) -> str:
+    """Feed one emailed PDF into the same ticket/queue pipeline as /upload
+    and return its ticket ID (an existing one if this exact PDF is already
+    known)."""
+    content_hash = jobs.hash_pdf(pdf.data)
+    existing = jobs.find_existing(content_hash)
+    if existing is not None:
+        logger.info(f"[email] {pdf.filename!r} already has ticket {existing.ticket_id}")
+        return existing.ticket_id
+
+    job = jobs.create_job(content_hash)
+    if _upload_queue.full():  # shows up as a failed attempt, retried on a later poll
+        jobs.update(job.ticket_id, status=jobs.FAILED, message="Queue full", error="Server is busy processing other PDFs")
+        logger.warning(f"[email] queue full, marked failed: {job.ticket_id}")
+        return job.ticket_id
+    os.makedirs(jobs.PENDING_DIR, exist_ok=True)
+    with open(jobs.pending_path(job.ticket_id), "wb") as f:
+        f.write(pdf.data)
+    _upload_queue.put_nowait(job.ticket_id)
+    logger.info(f"[email] queued {pdf.filename!r}: {job.ticket_id}")
+    return job.ticket_id
+
+
+async def _advance_tracked_emails(poller: email_inbox.EmailPoller) -> None:
+    """Move every in-flight email forward: finalize finished PDFs, re-submit
+    failed ones while attempts remain, and mark an email read once all its
+    PDFs are finalized."""
+    for tracked in email_inbox.tracked_emails():
+        to_retry = []
+        for slot in tracked.slots:
+            if slot.final:
+                continue
+            job = jobs.get_job(slot.ticket_id)
+            if job is None or job.status == jobs.COMPLETED:
+                email_inbox.finalize(tracked, slot)
+            elif job.status == jobs.FAILED:
+                if slot.attempts >= EMAIL_MAX_ATTEMPTS:
+                    logger.warning(f"[email] {slot.filename!r} failed after {slot.attempts} attempt(s): {job.error}")
+                    email_inbox.finalize(tracked, slot)
+                else:
+                    to_retry.append(slot)
+
+        if to_retry:
+            refetched = await asyncio.to_thread(poller.refetch, tracked.email.uid)
+            by_hash = {jobs.hash_pdf(p.data): p for p in refetched.pdfs} if refetched else {}
+            for slot in to_retry:
+                pdf = by_hash.get(slot.content_hash)
+                if pdf is None:
+                    logger.warning(f"[email] could not re-download {slot.filename!r} for retry, giving up")
+                    email_inbox.finalize(tracked, slot)
+                    continue
+                slot.attempts += 1
+                slot.ticket_id = _submit_email_pdf(pdf)
+                logger.info(f"[email] retrying {slot.filename!r} (attempt {slot.attempts}/{EMAIL_MAX_ATTEMPTS}): {slot.ticket_id}")
+
+        if all(slot.final for slot in tracked.slots):
+            await asyncio.to_thread(poller.mark_done, tracked.email.uid)
+            email_inbox.untrack(tracked)
+
+
+async def _email_poll_loop() -> None:
+    poller = email_inbox.EmailPoller()
+    while True:
+        try:
+            for incoming in await asyncio.to_thread(poller.fetch_new):
+                logger.info(f"[email] new email from {incoming.sender!r}: {len(incoming.pdfs)} PDF attachment(s)")
+                slots = [
+                    email_inbox.Slot(pdf.filename, jobs.hash_pdf(pdf.data), _submit_email_pdf(pdf))
+                    for pdf in incoming.pdfs
+                ]
+                email_inbox.track(incoming, slots)
+            await _advance_tracked_emails(poller)
+        except Exception:
+            logger.exception("[email] poll failed, will retry")
+        await asyncio.sleep(IMAP_POLL_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     workers = [asyncio.create_task(_upload_worker(i)) for i in range(PDF_WORKER_COUNT)]
@@ -63,7 +148,16 @@ async def lifespan(app: FastAPI):
         except asyncio.QueueFull:
             jobs.update(ticket_id, status=jobs.FAILED, message="Processing failed", error="Server restarted with a full queue - please resubmit")
 
+    email_task = None
+    if EMAIL_ENABLED:
+        email_task = asyncio.create_task(_email_poll_loop())
+        logger.info(f"started email watcher (every {IMAP_POLL_INTERVAL_SECONDS}s)")
+    else:
+        logger.info("email watcher disabled (IMAP_HOST / IMAP_USERNAME / IMAP_PASSWORD not set)")
+
     yield
+    if email_task is not None:
+        email_task.cancel()
     for worker in workers:
         worker.cancel()
     logger.info("stopped upload worker(s)")
@@ -75,7 +169,7 @@ app = FastAPI(title="Receipt OCR API", lifespan=lifespan)
 def root():
     return {
         "message": "Receipt OCR API is running. See /docs for interactive testing.",
-        "endpoints": ["/health", "POST /extract"],
+        "endpoints": ["/health", "POST /extract", "POST /upload", "GET /status/{ticket_id}", "GET /api/v1/invoices/new"],
     }
 
 
@@ -363,3 +457,18 @@ def get_status(ticket_id: str):
         raise HTTPException(status_code=404, detail="Unknown ticket_id")
     logger.info(f"[status] {ticket_id} -> {job.status} ({job.progress}%)")
     return job.to_dict()
+
+
+@app.get("/api/v1/invoices/new")
+def get_new_invoices():
+    """Return the extracted JSON for every emailed PDF that has finished
+    since the last call - each result is handed out once, so calling again
+    only returns what arrived after that. Emails that arrived before the
+    server started are never read. PDFs still being processed are counted in
+    `still_processing` and come back on a later call. A PDF that failed all
+    its EMAIL_MAX_ATTEMPTS attempts comes back once with status FAILED."""
+    if not EMAIL_ENABLED:
+        raise HTTPException(status_code=503, detail="Email intake is not configured - set IMAP_HOST, IMAP_USERNAME and IMAP_PASSWORD")
+    response = email_inbox.collect_ready()
+    logger.info(f"[invoices/new] handed out {response['count']} result(s), {response['still_processing']} still processing")
+    return response
