@@ -201,6 +201,7 @@ curl http://localhost:8000/api/v1/invoices/new
 | POST   | `/upload`                | PDF in, ticket ID out (processes later)   |
 | GET    | `/status/{ticket_id}`    | Progress and result of an upload          |
 | GET    | `/api/v1/invoices/new`   | New results from emailed PDFs             |
+| GET    | `/invoices/new`          | Same, but a plain list: `[]` when nothing new |
 | GET    | `/docs`                  | Interactive API docs (Swagger)            |
 
 ## 6. Files and logs

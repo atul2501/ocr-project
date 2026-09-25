@@ -169,7 +169,7 @@ app = FastAPI(title="Receipt OCR API", lifespan=lifespan)
 def root():
     return {
         "message": "Receipt OCR API is running. See /docs for interactive testing.",
-        "endpoints": ["/health", "POST /extract", "POST /upload", "GET /status/{ticket_id}", "GET /api/v1/invoices/new"],
+        "endpoints": ["/health", "POST /extract", "POST /upload", "GET /status/{ticket_id}", "GET /api/v1/invoices/new", "GET /invoices/new"],
     }
 
 
@@ -472,3 +472,16 @@ def get_new_invoices():
     response = email_inbox.collect_ready()
     logger.info(f"[invoices/new] handed out {response['count']} result(s), {response['still_processing']} still processing")
     return response
+
+
+@app.get("/invoices/new")
+def get_new_invoices_list():
+    """Same results as /api/v1/invoices/new (each handed out once), but as a
+    plain list - [] when nothing new has finished, never an error, so a
+    caller polling this doesn't have to special-case "no new invoices"."""
+    if not EMAIL_ENABLED:
+        logger.warning("[invoices/new] email intake is not configured - returning []")
+        return []
+    response = email_inbox.collect_ready()
+    logger.info(f"[invoices/new] handed out {response['count']} result(s), {response['still_processing']} still processing")
+    return response["items"]

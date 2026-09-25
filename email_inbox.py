@@ -75,15 +75,28 @@ def _parse(uid: int, raw: bytes) -> IncomingEmail:
         if part.is_multipart():
             continue
         filename = part.get_filename() or ""
-        if not (filename.lower().endswith(".pdf") or part.get_content_type() == "application/pdf"):
+        content_type = part.get_content_type()
+        if not (
+            filename.lower().endswith(".pdf")
+            or content_type == "application/pdf"
+            or (filename and content_type == "application/octet-stream")  # some
+                            # mail clients send every attachment as a generic
+                            # file - the %PDF- check below decides
+        ):
             continue
         payload = part.get_payload(decode=True)
-        if not payload or not payload.startswith(b"%PDF-"):
+        # the PDF spec allows junk before the header (within the first 1KB),
+        # and some scanners/mailers do add a few bytes there
+        if not payload or b"%PDF-" not in payload[:1024]:
+            if filename.lower().endswith(".pdf") or content_type == "application/pdf":
+                logger.warning(f"[email] uid {uid}: skipped {filename!r} ({content_type}) - not a readable PDF")
             continue
         if len(payload) > MAX_UPLOAD_BYTES:
             logger.warning(f"[email] skipped oversized attachment {filename!r} ({len(payload)} bytes)")
             continue
         parsed.pdfs.append(EmailPdf(filename=filename or "attachment.pdf", data=payload))
+    if parsed.pdfs:
+        logger.info(f"[email] uid {uid}: found {len(parsed.pdfs)} PDF(s): {[p.filename for p in parsed.pdfs]}")
     return parsed
 
 
@@ -201,7 +214,11 @@ class Tracked:
 
 _lock = threading.Lock()
 _tracked: list[Tracked] = []
-_entries: dict[str, dict] = {}  # ticket_id -> {email details..., "delivered": bool}
+_entries: dict[str, dict] = {}  # "uid#n" (n-th PDF of that email) -> {ticket_id,
+                                # email details..., "delivered": bool} - keyed
+                                # per attachment, not per ticket, because
+                                # identical PDFs share one ticket but must
+                                # each still get their own result
 
 
 def track(email_info: IncomingEmail, slots: list[Slot]) -> None:
@@ -222,14 +239,19 @@ def untrack(tracked: Tracked) -> None:
 
 def finalize(tracked: Tracked, slot: Slot) -> None:
     """This PDF is finished (completed, or failed with no attempts left):
-    make its result available to collect_ready(). A no-op registration if the
-    same PDF (same ticket) was already recorded, so duplicates are never
-    handed out twice."""
+    make its result available to collect_ready(). Every attachment gets its
+    own entry - even when the same PDF was attached twice, or already came
+    in an earlier email, and so shares that ticket - so the caller gets one
+    result per PDF they sent. Calling this again for the same attachment is
+    a no-op, so nothing is handed out twice."""
     with _lock:
         slot.final = True
-        if slot.ticket_id in _entries:
+        index = next(i for i, s in enumerate(tracked.slots) if s is slot)
+        key = f"{tracked.email.uid}#{index}"
+        if key in _entries:
             return
-        _entries[slot.ticket_id] = {
+        _entries[key] = {
+            "key": key,
             "ticket_id": slot.ticket_id,
             "from": tracked.email.sender,
             "subject": tracked.email.subject,
@@ -259,7 +281,8 @@ def _load() -> None:
     try:
         with open(MAILBOX_PATH, "r", encoding="utf-8") as f:
             for entry in json.load(f):
-                _entries[entry["ticket_id"]] = entry
+                _entries[entry.get("key", entry["ticket_id"])] = entry  # files
+                            # from before per-attachment keys have no "key"
     except (OSError, ValueError, KeyError, TypeError) as e:
         logger.warning(f"ignoring unreadable {MAILBOX_PATH}: {type(e).__name__}: {e}")
     logger.info(f"loaded {len(_entries)} email ticket(s) from {MAILBOX_PATH}")
@@ -274,16 +297,16 @@ def collect_ready() -> dict:
     items = []
     with _lock:
         changed = False
-        for ticket_id, entry in list(_entries.items()):
-            job = jobs.get_job(ticket_id)
+        for key, entry in list(_entries.items()):
+            job = jobs.get_job(entry["ticket_id"])
             if job is None:  # ticket expired out of jobs' cache - forget it too
-                del _entries[ticket_id]
+                del _entries[key]
                 changed = True
                 continue
             if entry["delivered"]:
                 continue
             items.append({
-                "ticket_id": ticket_id,
+                "ticket_id": entry["ticket_id"],
                 "email": {k: entry[k] for k in ("from", "subject", "date", "filename")},
                 "status": job.status,
                 "result": job.result,
