@@ -18,6 +18,7 @@ from api import (
     CONTRAST_CUTOFF,
     INVOICE_DIR,
     LOG_PATH,
+    LOG_TO_CONSOLE,
     MAX_RETRIES,
     MAX_WORKERS,
     MODEL,
@@ -64,7 +65,7 @@ _console_handler = logging.StreamHandler()  # so logs also reach stdout - proces
                                              # isn't visible in the Render log viewer
 _console_handler.setFormatter(_log_formatter)
 
-logging.basicConfig(level=logging.INFO, handlers=[_log_handler, _console_handler])
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler, _console_handler] if LOG_TO_CONSOLE else [_log_handler])
 logger = logging.getLogger(__name__)
 
 PROMPT = (PROMPTS)

@@ -19,6 +19,10 @@ OUTPUT_PATH = 'out.json'
 LOG_PATH = 'process.log'
 SHARPENED_DIR = 'output'
 SAVE_DEBUG_PAGES = False
+LOG_TO_CONSOLE = os.environ.get('LOG_TO_CONSOLE', 'true').strip().lower() not in ('0', 'false', 'no')  # run.sh
+                            # turns this off - in the background stdout goes
+                            # to run.log, which unlike process.log is never
+                            # wiped, so it would grow for as long as it runs
 
 
 API_KEYS: list[str] = []  # never hardcode a real key here - set

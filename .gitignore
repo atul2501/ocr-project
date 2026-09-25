@@ -7,3 +7,5 @@ cache/
 output/
 .env
 mailbox_state.json
+run.pid
+run.log
