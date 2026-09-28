@@ -208,7 +208,7 @@ curl http://localhost:8000/api/v1/invoices/new
 
 | Path                  | What it is                                                         |
 |-----------------------|--------------------------------------------------------------------|
-| `process.log`         | Main log: every upload, page, email and error. Wiped every 24 h.    |
+| `process.log`         | Main log: every upload, page, email and error. Wiped every 6 h.     |
 | `run.log`             | Server starts/restarts and crash errors. Emptied at 10 MB.          |
 | `run.pid`             | Process ID of the running server (used by `stop`/`status`)         |
 | `cache/`              | One JSON file per ticket, kept 7 days                              |

@@ -39,10 +39,10 @@ from ollama import ResponseError
 from PIL import Image, ImageFilter, ImageOps
 
 
-class _DailyWipingHandler(TimedRotatingFileHandler):
+class _WipingHandler(TimedRotatingFileHandler):
     """Same rollover scheduling as TimedRotatingFileHandler, but wipes the
     log file in place on rollover instead of renaming it to a backup -
-    process.log only ever holds the last <=24h of entries, with nothing
+    process.log only ever holds the last <=6h of entries, with nothing
     older kept around in any file."""
     def doRollover(self):
         if self.stream:
@@ -57,7 +57,7 @@ class _DailyWipingHandler(TimedRotatingFileHandler):
 
 _log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 
-_log_handler = _DailyWipingHandler(filename=LOG_PATH, when='H', interval=24, encoding='utf-8')
+_log_handler = _WipingHandler(filename=LOG_PATH, when='H', interval=6, encoding='utf-8')
 _log_handler.setFormatter(_log_formatter)
 
 _console_handler = logging.StreamHandler()  # so logs also reach stdout - process.log
