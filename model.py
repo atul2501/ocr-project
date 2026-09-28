@@ -707,10 +707,17 @@ def group_into_invoices(page_results: list[tuple[str, dict]]) -> list[Invoice]:
             # with each other and the second gets wrongly dropped as a
             # same-page "duplicate", when the fingerprint dedup is only
             # meant to catch a whole page re-scanned twice.
+            # A blank VEHICLE_NUMBER on either side is treated as a wildcard:
+            # one scan of a page often picks up the vehicle on the item row
+            # and the other doesn't, which shouldn't make it a new item.
             seen = seen_items_by_number[key]
             incoming_fingerprints = set()
             for item in invoice.ITEM_LIST:
                 fingerprint = _item_fingerprint(item)
+                if len(fingerprint) == 5:
+                    base = fingerprint[:4]
+                    if any(s[:4] == base and (not s[4] or not fingerprint[4]) for s in seen if len(s) == 5):
+                        continue
                 if fingerprint not in seen:
                     existing.ITEM_LIST.append(item)
                     incoming_fingerprints.add(fingerprint)
@@ -751,15 +758,25 @@ def _merge_duplicate_totals(invoices: list[Invoice], source_ids: list[set[str]])
             if f.name != "ITEM_LIST" and getattr(inv, f.name) not in ("", 0.0)
         )
 
+    def item_keys(inv: Invoice) -> set[tuple]:
+        return {(item.HSN, round(item.AMOUNT, 2)) for item in inv.ITEM_LIST if item.HSN and item.AMOUNT}
+
     kept: list[Invoice] = []
     kept_sources: list[set[str]] = []
     for invoice, srcs in zip(invoices, source_ids):
         for i, existing in enumerate(kept):
+            # BASE_VALUE alone is not trusted to match: a rotated/noisy scan of
+            # the letterhead copy can come back with the gross total misread
+            # as the base value (and a misread invoice number) - so a shared
+            # line item (same HSN and amount) also counts as corroboration.
             if (
                 srcs & kept_sources[i]
                 and invoice.GROSS_TOTAL != 0
                 and round(invoice.GROSS_TOTAL, 2) == round(existing.GROSS_TOTAL, 2)
-                and round(invoice.BASE_VALUE, 2) == round(existing.BASE_VALUE, 2)
+                and (
+                    round(invoice.BASE_VALUE, 2) == round(existing.BASE_VALUE, 2)
+                    or item_keys(invoice) & item_keys(existing)
+                )
             ):
                 primary, other = (
                     (existing, invoice)
