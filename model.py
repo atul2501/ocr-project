@@ -224,11 +224,40 @@ def _is_blank_value(value) -> bool:
     return value is None
 
 
+def _is_e_way_bill(result: dict) -> bool:
+    return str(result.get("METADATA", {}).get("DOCUMENT_TYPE", "")).strip().upper().replace("-", "_") == "E_WAY_BILL"
+
+
+def _restrict_e_way_bill(result: dict) -> dict:
+    """An e-Way Bill page carries a GSTIN, customer, goods and a total, so the
+    model sometimes marks it IS_TARGET_DOCUMENT=true and extracts it as its
+    own invoice (with the EWB number as INVOICE_NUMBER and a partial/
+    challan value as the totals). The prompt only allows an e-Way Bill to
+    contribute IRN, Ack Date and the referenced invoice number (see its
+    "Exception" rule) - enforce that here rather than trusting the model:
+    without an IRN/Ack Date the page contributes nothing at all."""
+    gst_compliance = result.get("GST_COMPLIANCE", {})
+    irn = gst_compliance.get("IRN", "")
+    ack_date = gst_compliance.get("ACKNOWLEDGEMENT_DATE", "")
+    if not irn and not ack_date:
+        return {}
+    return {
+        "DOCUMENT": {"INVOICE_NUMBER": result.get("DOCUMENT", {}).get("INVOICE_NUMBER", "")},
+        "GST_COMPLIANCE": {"IRN": irn, "ACKNOWLEDGEMENT_DATE": ack_date},
+    }
+
+
 def is_blank_result(result: dict) -> bool:
     is_target = str(result.get("METADATA", {}).get("IS_TARGET_DOCUMENT", "")).strip().lower()
     if is_target and is_target != "true":
         logger.debug("blank result: IS_TARGET_DOCUMENT is not true")
         return True
+
+    if _is_e_way_bill(result):
+        result = _restrict_e_way_bill(result)
+        if not result:
+            logger.debug("blank result: e-Way Bill page with no IRN/Ack Date")
+            return True
 
     blank = _is_blank_value(result)
     logger.debug(f"blank result check: blank={blank}")
@@ -328,6 +357,18 @@ def normalize_gstin(gstin: str) -> str:
             first14 = "".join(chars)
             return first14 + _gstin_checksum(first14)
         return gstin
+    if len(gstin) == 16:
+        # One extra character, typically a letter doubled when the model
+        # rejoins a GSTIN printed in spaced groups (e.g. e-Way Bill's
+        # "27AAA CT134 4F1ZO" read back as "27AAAACT1344F1ZO"). Accept a
+        # deletion only if it yields exactly one GSTIN that fits the layout
+        # and passes the checksum - otherwise leave it for a human.
+        candidates = {
+            c for c in (gstin[:i] + gstin[i + 1:] for i in range(16))
+            if all(_class_matches(ch, cls) for ch, cls in zip(c, _GSTIN_TEMPLATE))
+            and c[14] == _gstin_checksum(c[:14])
+        }
+        return candidates.pop() if len(candidates) == 1 else gstin
     if len(gstin) != 15:
         return gstin
     chars = list(gstin)
@@ -351,7 +392,15 @@ def _pan_from_gstin(gstin: str) -> str:
     return candidate if _PAN_PATTERN.match(candidate) else ""
 
 
-_PLACE_OF_SUPPLY_PATTERN = re.compile(r"^\s*(\d{1,2})\s*[-–:]?\s*(.*)$")
+def normalize_vehicle_numbers(value: str) -> str:
+    """Plates are printed with arbitrary internal spacing ("GJ 27TJ 7277",
+    "GJ-27-TJ-7277") - strip it so the same plate always reads the same
+    ("GJ27TJ7277"). Several plates on one invoice stay comma-separated."""
+    plates = [re.sub(r"[\s\-.]+", "", p).upper() for p in re.split(r"[,;/&]", value or "")]
+    return ", ".join(p for p in plates if p)
+
+
+_PLACE_OF_SUPPLY_PATTERN =re.compile(r"^\s*(\d{1,2})\s*[-–:]?\s*(.*)$")
 
 
 def _split_place_of_supply(document: dict, gst_compliance: dict) -> tuple[str, str]:
@@ -430,6 +479,13 @@ def _label_freight_items(
     if not is_freight_bill:
         return
     for item in primary_items:
+        # A goods HSN (anything outside chapter 99, which is services/SAC -
+        # freight is 9965xx/9967xx) means this row is a product, not
+        # transport - a goods invoice that merely prints the vehicle it was
+        # dispatched in (e.g. a machinery Tax Invoice) is not a freight bill.
+        hsn = re.sub(r"\D", "", item.HSN)
+        if hsn and not hsn.startswith("99"):
+            continue
         if not re.search(r"\bfreight\b", item.DESCRIPTION, re.IGNORECASE):
             item.DESCRIPTION = f"Freight Charges - {item.DESCRIPTION}" if item.DESCRIPTION else "Freight Charges"
 
@@ -459,7 +515,7 @@ class InvoiceItem:
             WEIGHT_UNIT=item.get("WEIGHT_UNIT", ""),
             UNIT_PRICE=_to_float(item.get("UNIT_PRICE", "")),
             AMOUNT=_to_float(item.get("LINE_TOTAL", "")),
-            VEHICLE_NUMBER=item.get("VEHICLE_NUMBER", ""),
+            VEHICLE_NUMBER=normalize_vehicle_numbers(item.get("VEHICLE_NUMBER", "")),
         )
 
 
@@ -492,6 +548,8 @@ class Invoice:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Invoice":
+        if _is_e_way_bill(data):
+            data = _restrict_e_way_bill(data)
         document = data.get("DOCUMENT", {})
         supplier = data.get("SUPPLIER", {})
         customer = data.get("CUSTOMER", {})
@@ -502,7 +560,9 @@ class Invoice:
         logistics = data.get("LOGISTICS", {})
         delivery = data.get("DELIVERY", {})
 
-        vehicle_number = _first_value(logistics.get("VEHICLE_NUMBER"), delivery.get("VEHICLE_NUMBER"))
+        vehicle_number = normalize_vehicle_numbers(
+            _first_value(logistics.get("VEHICLE_NUMBER"), delivery.get("VEHICLE_NUMBER"))
+        )
         vendor_name = _first_value(supplier.get("NAME"), supplier.get("LEGAL_NAME"), supplier.get("TRADE_NAME"))
         logger.debug(f"building invoice from page dict: vendor={vendor_name!r} invoice_no={document.get('INVOICE_NUMBER', '')!r}")
         item_list = cls._build_item_list(data)
