@@ -311,8 +311,23 @@ def normalize_gstin(gstin: str) -> str:
     "O") when doing so is what the GSTIN's own fixed digit/letter layout or
     checksum requires - never applied speculatively, only when the swap
     makes an otherwise-invalid position valid. Leaves anything else
-    (wrong length, multi-character errors) untouched for a human to catch."""
-    gstin = (gstin or "").strip().upper()
+    (wrong length, multi-character errors) untouched for a human to catch.
+
+    One exception on length: a 14-char value whose characters all fit the
+    GSTIN layout is a GSTIN with its trailing checksum dropped (seen when the
+    checksum is a letter like "O" printed flush against the edge, e.g.
+    "27AAACT1344F1ZO" read as "27AAACT1344F1Z") - the checksum is fully
+    determined by the first 14, so it's restored rather than guessed."""
+    gstin = re.sub(r"\s+", "", gstin or "").upper()
+    if len(gstin) == 14:
+        chars = [
+            ch if _class_matches(ch, cls) else _GSTIN_CONFUSABLE.get(ch, ch)
+            for ch, cls in zip(gstin, _GSTIN_TEMPLATE)
+        ]
+        if all(_class_matches(ch, cls) for ch, cls in zip(chars, _GSTIN_TEMPLATE)):
+            first14 = "".join(chars)
+            return first14 + _gstin_checksum(first14)
+        return gstin
     if len(gstin) != 15:
         return gstin
     chars = list(gstin)

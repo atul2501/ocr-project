@@ -133,6 +133,13 @@ IMPORTANT EXTRACTION RULES:
   either one.
 - Extract Indian GSTIN, PAN, CIN and other statutory identifiers when visible.
 - Read clearly visible handwritten information, but do not guess unclear handwriting.
+- "DOCUMENT.INVOICE_DATE" is the date printed beside the invoice number in
+  the header (labelled "Date", "Invoice Date", "Bill Date", "Inv. Dt." or
+  similar) - always fill it when such a header date is visible; never
+  leave it "" just because other dates also appear on the page. Do not
+  use a per-row trip/LR/loading date from the items table for it (e.g. on
+  a transporter bill with "Invoice No: X / Date: 31-03-2026" in the header
+  and a row dated 22-03-2026, INVOICE_DATE is "31-03-2026").
 - Every date value anywhere in the JSON output (INVOICE_DATE, PO_DATE,
   ACKNOWLEDGEMENT_DATE and any other date field) must be formatted as
   DD-MM-YYYY only - two-digit day, two-digit month, four-digit year,
@@ -215,6 +222,8 @@ after careful re-reading, return an empty string "" rather than a guess:
   which one is actually printed.
 - GSTIN: exactly 15 characters - 2 digits (state code), 10 characters (PAN: 5 letters,
   4 digits, 1 letter), 1 digit (entity code), the letter "Z", 1 alphanumeric checksum.
+  Count all 15 characters - the checksum after "Z" is frequently a letter
+  (e.g. "27AAACT1344F1ZO" ends in the letter O); never drop it.
 - PAN: exactly 10 characters - 5 letters, 4 digits, 1 letter (e.g. AAAAA9999A).
 - GST_COMPLIANCE.IRN: exactly 64 lowercase hexadecimal characters (0-9, a-f
   only - no uppercase, no spaces, no dashes). This is the e-invoice Invoice
