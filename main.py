@@ -456,6 +456,7 @@ def get_status(ticket_id: str):
         logger.warning(f"[status] unknown ticket: {ticket_id}")
         raise HTTPException(status_code=404, detail="Unknown ticket_id")
     logger.info(f"[status] {ticket_id} -> {job.status} ({job.progress}%)")
+    logger.info(f"output->{job.to_dict()}")
     return job.to_dict()
 
 
