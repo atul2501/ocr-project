@@ -6,7 +6,9 @@
 #   ./run.sh restart      stop, then start
 #   ./run.sh status       is it running?
 #   ./run.sh logs         follow process.log
-#   ./run.sh fg           run in the foreground (Ctrl+C to stop)
+#   ./run.sh fg           run in the foreground (Ctrl+C to stop) - logs go to
+#                         stdout as well as process.log, so use this as the
+#                         start command on Render to see them in its log viewer
 #   ./run.sh setup        only create .venv / install requirements, do not start
 #
 # Once started it keeps running after the terminal/SSH session is closed, and
@@ -37,7 +39,13 @@ MAX_RESTART_DELAY=60                 # seconds; crash-loop backoff tops out here
 VENV=.venv
 REQ_STAMP=$VENV/.requirements.cksum  # checksum of the requirements.txt last installed
 
-log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [run.sh] $*" >> "$RUN_LOG"; }
+FOREGROUND=0                         # set by "fg": output goes to stdout instead of run.log
+
+log() {
+    local line
+    line="$(date '+%Y-%m-%d %H:%M:%S') [run.sh] $*"
+    if [ "$FOREGROUND" = 1 ]; then echo "$line"; else echo "$line" >> "$RUN_LOG"; fi
+}
 
 is_running() {
     [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
@@ -112,14 +120,21 @@ supervise() {
         exit 1
     }
     echo $$ > "$PID_FILE"
-    export LOG_TO_CONSOLE=false            # everything already goes to process.log
+    if [ "$FOREGROUND" = 1 ]; then
+        export LOG_TO_CONSOLE=true         # stdout is what Render's log viewer shows
+        export PYTHONUNBUFFERED=1          # don't hold back print()/tracebacks
+        local out=/dev/stdout
+    else
+        export LOG_TO_CONSOLE=false        # everything already goes to process.log
+        local out=$RUN_LOG
+    fi
 
     local child="" stopping=0 delay=5 started code
     trap 'stopping=1; [ -n "$child" ] && kill -TERM "$child" 2>/dev/null' TERM INT
     trap '' HUP                            # closing the terminal must not stop it
 
     while [ "$stopping" = 0 ]; do
-        if [ -f "$RUN_LOG" ] && [ "$(wc -c < "$RUN_LOG")" -gt "$RUN_LOG_MAX_BYTES" ]; then
+        if [ "$FOREGROUND" = 0 ] && [ -f "$RUN_LOG" ] && [ "$(wc -c < "$RUN_LOG")" -gt "$RUN_LOG_MAX_BYTES" ]; then
             : > "$RUN_LOG"
         fi
         log "starting server on ${HOST:-0.0.0.0}:${PORT:-8000}"
@@ -129,7 +144,7 @@ supervise() {
             --port "${PORT:-8000}" \
             --workers 1 \
             --no-access-log \
-            >> "$RUN_LOG" 2>&1 &
+            >> "$out" 2>&1 &
         child=$!
         # a trapped signal interrupts wait - keep waiting until uvicorn has
         # actually finished its graceful shutdown
@@ -218,7 +233,7 @@ case "${1:-start}" in
     restart)     stop; start ;;
     status)      status ;;
     logs)        tail -n 100 -f process.log ;;
-    fg)          setup && supervise ;;
+    fg)          FOREGROUND=1; setup && supervise ;;
     setup)       setup && echo "Setup done." ;;
     _supervise)  supervise ;;
     *)
